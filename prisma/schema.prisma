@@ -1,0 +1,215 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  ADMIN
+  DISPATCHER
+  DRIVER
+
+  @@map("user_role")
+}
+
+enum DeliveryStatus {
+  PLACED     @map("placed")
+  ASSIGNED   @map("assigned")
+  PICKED_UP  @map("picked_up")
+  IN_TRANSIT @map("in_transit")
+  DELIVERED  @map("delivered")
+  DELAYED    @map("delayed")
+
+  @@map("delivery_status")
+}
+
+enum DriverStatus {
+  AVAILABLE @map("available")
+  ASSIGNED  @map("assigned")
+  OFFLINE   @map("offline")
+
+  @@map("driver_status")
+}
+
+enum Priority {
+  STANDARD @map("standard")
+  EXPRESS  @map("express")
+  CRITICAL @map("critical")
+
+  @@map("priority")
+}
+
+enum NotificationTone {
+  INFO    @map("info")
+  SUCCESS @map("success")
+  WARNING @map("warning")
+
+  @@map("notification_tone")
+}
+
+enum AssignmentStatus {
+  OFFERED   @map("offered")
+  ACCEPTED  @map("accepted")
+  REJECTED  @map("rejected")
+  COMPLETED @map("completed")
+  CANCELLED @map("cancelled")
+
+  @@map("assignment_status")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String   @map("password_hash")
+  role         UserRole
+  driver       Driver?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model Driver {
+  id             String               @id
+  userId         String?              @unique @map("user_id")
+  user           User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+  name           String
+  initials       String
+  status         DriverStatus         @default(AVAILABLE)
+  vehicle        String
+  rating         Float                @default(5)
+  capacityKg     Float?               @map("capacity_kg")
+  activeOrderId  String?              @unique @map("active_order_id")
+  activeOrder    Order?               @relation("ActiveDriverOrder", fields: [activeOrderId], references: [id], onDelete: SetNull)
+  latestLat      Float                @map("latest_lat")
+  latestLng      Float                @map("latest_lng")
+  latestPoint    Unsupported("geography(Point,4326)")? @map("latest_point")
+  routeProgress  Int                  @default(0) @map("route_progress")
+  assignments    DeliveryAssignment[]
+  locations      DriverLocation[]
+  orders         Order[]              @relation("AssignedDriverOrders")
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([latestLat, latestLng])
+  @@map("drivers")
+}
+
+model DriverLocation {
+  id        String   @id @default(cuid())
+  driverId  String   @map("driver_id")
+  driver    Driver   @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  lat       Float
+  lng       Float
+  point     Unsupported("geography(Point,4326)")? @map("point")
+  heading   Float?
+  speedKph  Float?   @map("speed_kph")
+  recordedAt DateTime @default(now()) @map("recorded_at")
+
+  @@index([driverId, recordedAt])
+  @@map("driver_locations")
+}
+
+model Order {
+  id                  String                @id
+  customer            String
+  phone               String
+  address             String
+  items               Int
+  weightKg            Float                 @map("weight_kg")
+  status              DeliveryStatus        @default(PLACED)
+  priority            Priority              @default(STANDARD)
+  driverId            String?               @map("driver_id")
+  driver              Driver?               @relation("AssignedDriverOrders", fields: [driverId], references: [id], onDelete: SetNull)
+  activeDriver        Driver?               @relation("ActiveDriverOrder")
+  placedAt            DateTime              @default(now()) @map("placed_at")
+  etaMinutes          Int?                  @map("eta_minutes")
+  deliveredAt         DateTime?             @map("delivered_at")
+  destinationLat      Float                 @map("destination_lat")
+  destinationLng      Float                 @map("destination_lng")
+  destinationPoint    Unsupported("geography(Point,4326)")? @map("destination_point")
+  assignments         DeliveryAssignment[]
+  statusEvents        DeliveryStatusEvent[]
+  routePlans          RoutePlan[]
+  createdAt           DateTime              @default(now()) @map("created_at")
+  updatedAt           DateTime              @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([driverId])
+  @@index([destinationLat, destinationLng])
+  @@map("orders")
+}
+
+model DeliveryAssignment {
+  id         String           @id @default(cuid())
+  orderId    String           @map("order_id")
+  order      Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  driverId   String           @map("driver_id")
+  driver     Driver           @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  status     AssignmentStatus @default(OFFERED)
+  assignedAt DateTime         @default(now()) @map("assigned_at")
+  acceptedAt DateTime?        @map("accepted_at")
+  completedAt DateTime?       @map("completed_at")
+
+  @@index([orderId])
+  @@index([driverId])
+  @@map("delivery_assignments")
+}
+
+model DeliveryStatusEvent {
+  id        String         @id @default(cuid())
+  orderId   String         @map("order_id")
+  order     Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status    DeliveryStatus
+  note      String?
+  createdBy String?        @map("created_by")
+  createdAt DateTime       @default(now()) @map("created_at")
+
+  @@index([orderId, createdAt])
+  @@map("delivery_status_events")
+}
+
+model Notification {
+  id        String           @id
+  title     String
+  body      String
+  tone      NotificationTone @default(INFO)
+  readAt    DateTime?        @map("read_at")
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model RoutePlan {
+  id              String   @id @default(cuid())
+  orderId         String   @map("order_id")
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  driverId        String?  @map("driver_id")
+  encodedPolyline String?  @map("encoded_polyline")
+  distanceMeters  Int?     @map("distance_meters")
+  etaMinutes      Int?     @map("eta_minutes")
+  provider        String   @default("internal")
+  modelVersion    String?  @map("model_version")
+  metadata        Json?
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([orderId, createdAt])
+  @@map("route_plans")
+}
+
+model DemandForecast {
+  id         String   @id @default(cuid())
+  window     String
+  orders     Int
+  predicted  Int?
+  confidence Float?
+  generatedAt DateTime @default(now()) @map("generated_at")
+
+  @@index([generatedAt])
+  @@map("demand_forecasts")
+}
