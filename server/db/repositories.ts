@@ -1,5 +1,15 @@
 import { prisma } from "./prisma";
-import type { DeliveryStatus, Driver, DriverStatus, ForecastPoint, NotificationItem, Order, Priority } from "../../lib/types";
+import type {
+  DeliveryProofInput,
+  DeliveryStatus,
+  Driver,
+  DriverAssignment,
+  DriverStatus,
+  ForecastPoint,
+  NotificationItem,
+  Order,
+  Priority
+} from "../../lib/types";
 import type { AuthUser } from "../auth/tokens";
 
 const prismaStatus = {
@@ -36,6 +46,14 @@ const apiPriority: Record<string, Priority> = {
   STANDARD: "standard",
   EXPRESS: "express",
   CRITICAL: "critical"
+};
+
+const apiAssignmentStatus: Record<string, DriverAssignment["status"]> = {
+  OFFERED: "offered",
+  ACCEPTED: "accepted",
+  REJECTED: "rejected",
+  COMPLETED: "completed",
+  CANCELLED: "cancelled"
 };
 
 type OrderRecord = {
@@ -78,6 +96,18 @@ type NotificationRecord = {
 type DemandForecastRecord = {
   window: string;
   orders: number;
+};
+
+type AssignmentRecord = {
+  id: string;
+  status: string;
+  assignedAt: Date;
+  acceptedAt: Date | null;
+  rejectedAt?: Date | null;
+  rejectionReason?: string | null;
+  completedAt: Date | null;
+  order: OrderRecord;
+  driver: DriverRecord;
 };
 
 export async function listOrders(): Promise<Order[]> {
@@ -129,6 +159,254 @@ export function mapAuthUser(user: { id: string; email: string; name: string; rol
     email: user.email,
     name: user.name,
     role: user.role as AuthUser["role"]
+  };
+}
+
+export async function getDriverForUser(userId: string): Promise<Driver | null> {
+  const driver = await prisma.driver.findUnique({
+    where: { userId }
+  });
+
+  return driver ? mapDriver(driver) : null;
+}
+
+export async function listDriverAssignments(userId: string): Promise<DriverAssignment[]> {
+  const driver = await prisma.driver.findUnique({
+    where: { userId }
+  });
+
+  if (!driver) return [];
+
+  const assignments = await prisma.deliveryAssignment.findMany({
+    where: { driverId: driver.id },
+    include: {
+      order: true,
+      driver: true
+    },
+    orderBy: { assignedAt: "desc" }
+  });
+
+  return assignments.map(mapAssignment);
+}
+
+export async function respondToDriverAssignment(userId: string, orderId: string, action: "accept" | "reject", reason?: string) {
+  const driver = await prisma.driver.findUnique({
+    where: { userId }
+  });
+
+  if (!driver) return null;
+
+  const assignment = await prisma.deliveryAssignment.findFirst({
+    where: {
+      orderId,
+      driverId: driver.id,
+      status: "OFFERED"
+    }
+  });
+
+  if (!assignment) return null;
+
+  const result = await prisma.$transaction(async (tx) => {
+    if (action === "reject") {
+      const [updatedAssignment, updatedOrder, updatedDriver] = await Promise.all([
+        tx.deliveryAssignment.update({
+          where: { id: assignment.id },
+          data: {
+            status: "REJECTED",
+            rejectedAt: new Date(),
+            rejectionReason: reason ?? null
+          },
+          include: { order: true, driver: true }
+        }),
+        tx.order.update({
+          where: { id: orderId },
+          data: {
+            status: prismaStatus.placed,
+            driverId: null,
+            etaMinutes: null
+          }
+        }),
+        tx.driver.update({
+          where: { id: driver.id },
+          data: {
+            status: prismaDriverStatus.available,
+            activeOrderId: null,
+            routeProgress: 0
+          }
+        })
+      ]);
+
+      await tx.deliveryStatusEvent.create({
+        data: {
+          orderId,
+          status: prismaStatus.placed,
+          note: reason ? `Driver rejected assignment: ${reason}` : "Driver rejected assignment",
+          createdBy: userId
+        }
+      });
+
+      return {
+        assignment: updatedAssignment,
+        order: updatedOrder,
+        driver: updatedDriver
+      };
+    }
+
+    const [updatedAssignment, updatedOrder, updatedDriver] = await Promise.all([
+      tx.deliveryAssignment.update({
+        where: { id: assignment.id },
+        data: {
+          status: "ACCEPTED",
+          acceptedAt: new Date()
+        },
+        include: { order: true, driver: true }
+      }),
+      tx.order.update({
+        where: { id: orderId },
+        data: { status: prismaStatus.assigned }
+      }),
+      tx.driver.update({
+        where: { id: driver.id },
+        data: {
+          status: prismaDriverStatus.assigned,
+          activeOrderId: orderId,
+          routeProgress: Math.max(driver.routeProgress, 8)
+        }
+      })
+    ]);
+
+    await tx.deliveryStatusEvent.create({
+      data: {
+        orderId,
+        status: prismaStatus.assigned,
+        note: "Driver accepted assignment",
+        createdBy: userId
+      }
+    });
+
+    return {
+      assignment: updatedAssignment,
+      order: updatedOrder,
+      driver: updatedDriver
+    };
+  });
+
+  return {
+    assignment: mapAssignment(result.assignment),
+    order: mapOrder(result.order),
+    driver: mapDriver(result.driver)
+  };
+}
+
+export async function updateDriverDeliveryStatus(
+  userId: string,
+  orderId: string,
+  status: Extract<DeliveryStatus, "picked_up" | "in_transit" | "delayed" | "delivered">,
+  proof?: DeliveryProofInput
+) {
+  const driver = await prisma.driver.findUnique({
+    where: { userId }
+  });
+
+  if (!driver) return null;
+
+  const assignment = await prisma.deliveryAssignment.findFirst({
+    where: {
+      orderId,
+      driverId: driver.id,
+      status: { in: ["ACCEPTED", "COMPLETED"] }
+    }
+  });
+
+  if (!assignment) return null;
+
+  const result = await prisma.$transaction(async (tx) => {
+    const updatedOrder = await tx.order.update({
+      where: { id: orderId },
+      data: {
+        status: prismaStatus[status],
+        deliveredAt: status === "delivered" ? new Date() : undefined,
+        etaMinutes: status === "delivered" ? null : undefined
+      }
+    });
+
+    const updatedDriver = await tx.driver.update({
+      where: { id: driver.id },
+      data:
+        status === "delivered"
+          ? {
+              status: prismaDriverStatus.available,
+              activeOrderId: null,
+              routeProgress: 0
+            }
+          : {
+              status: prismaDriverStatus.assigned,
+              activeOrderId: orderId,
+              routeProgress: nextProgress(status, driver.routeProgress)
+            }
+    });
+
+    const updatedAssignment = await tx.deliveryAssignment.update({
+      where: { id: assignment.id },
+      data:
+        status === "delivered"
+          ? {
+              status: "COMPLETED",
+              completedAt: new Date()
+            }
+          : {},
+      include: {
+        order: true,
+        driver: true
+      }
+    });
+
+    if (status === "delivered") {
+      await tx.deliveryProof.upsert({
+        where: { orderId },
+        update: {
+          driverId: driver.id,
+          recipientName: proof?.recipientName,
+          signatureUrl: proof?.signatureUrl,
+          photoUrl: proof?.photoUrl,
+          notes: proof?.notes,
+          deliveredLat: proof?.deliveredLat,
+          deliveredLng: proof?.deliveredLng,
+          deliveredAt: new Date()
+        },
+        create: {
+          orderId,
+          driverId: driver.id,
+          recipientName: proof?.recipientName,
+          signatureUrl: proof?.signatureUrl,
+          photoUrl: proof?.photoUrl,
+          notes: proof?.notes,
+          deliveredLat: proof?.deliveredLat,
+          deliveredLng: proof?.deliveredLng
+        }
+      });
+    }
+
+    await tx.deliveryStatusEvent.create({
+      data: {
+        orderId,
+        status: prismaStatus[status],
+        note: proof?.notes,
+        createdBy: userId
+      }
+    });
+
+    return {
+      assignment: updatedAssignment,
+      order: updatedOrder,
+      driver: updatedDriver
+    };
+  });
+
+  return {
+    assignment: mapAssignment(result.assignment),
+    order: mapOrder(result.order),
+    driver: mapDriver(result.driver)
   };
 }
 
@@ -345,6 +623,27 @@ function mapNotification(record: NotificationRecord): NotificationItem {
     tone: record.tone.toLowerCase() as NotificationItem["tone"],
     time: relativeMinutes(record.createdAt)
   };
+}
+
+function mapAssignment(record: AssignmentRecord): DriverAssignment {
+  return {
+    id: record.id,
+    order: mapOrder(record.order),
+    driver: mapDriver(record.driver),
+    status: apiAssignmentStatus[record.status] ?? "offered",
+    assignedAt: record.assignedAt.toISOString(),
+    acceptedAt: record.acceptedAt?.toISOString(),
+    rejectedAt: record.rejectedAt?.toISOString(),
+    rejectionReason: record.rejectionReason ?? undefined,
+    completedAt: record.completedAt?.toISOString()
+  };
+}
+
+function nextProgress(status: DeliveryStatus, current: number) {
+  if (status === "picked_up") return Math.max(current, 25);
+  if (status === "in_transit") return Math.max(current, 50);
+  if (status === "delayed") return Math.max(current, 50);
+  return current;
 }
 
 function relativeMinutes(date: Date) {

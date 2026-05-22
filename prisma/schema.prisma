@@ -91,6 +91,7 @@ model Driver {
   assignments    DeliveryAssignment[]
   locations      DriverLocation[]
   orders         Order[]              @relation("AssignedDriverOrders")
+  deliveryProofs DeliveryProof[]
   createdAt      DateTime             @default(now()) @map("created_at")
   updatedAt      DateTime             @updatedAt @map("updated_at")
 
@@ -134,6 +135,7 @@ model Order {
   destinationPoint    Unsupported("geography(Point,4326)")? @map("destination_point")
   assignments         DeliveryAssignment[]
   statusEvents        DeliveryStatusEvent[]
+  deliveryProof       DeliveryProof?
   routePlans          RoutePlan[]
   createdAt           DateTime              @default(now()) @map("created_at")
   updatedAt           DateTime              @updatedAt @map("updated_at")
@@ -153,11 +155,31 @@ model DeliveryAssignment {
   status     AssignmentStatus @default(OFFERED)
   assignedAt DateTime         @default(now()) @map("assigned_at")
   acceptedAt DateTime?        @map("accepted_at")
+  rejectedAt DateTime?        @map("rejected_at")
+  rejectionReason String?     @map("rejection_reason")
   completedAt DateTime?       @map("completed_at")
 
   @@index([orderId])
   @@index([driverId])
   @@map("delivery_assignments")
+}
+
+model DeliveryProof {
+  id            String   @id @default(cuid())
+  orderId       String   @unique @map("order_id")
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  driverId      String   @map("driver_id")
+  driver        Driver   @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  recipientName String?  @map("recipient_name")
+  signatureUrl  String?  @map("signature_url")
+  photoUrl      String?  @map("photo_url")
+  notes         String?
+  deliveredLat  Float?   @map("delivered_lat")
+  deliveredLng  Float?   @map("delivered_lng")
+  deliveredAt   DateTime @default(now()) @map("delivered_at")
+
+  @@index([driverId, deliveredAt])
+  @@map("delivery_proofs")
 }
 
 model DeliveryStatusEvent {

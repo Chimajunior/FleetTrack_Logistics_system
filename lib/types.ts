@@ -54,3 +54,24 @@ export type ForecastPoint = {
   label: string;
   orders: number;
 };
+
+export type DriverAssignment = {
+  id: string;
+  order: Order;
+  driver: Driver;
+  status: "offered" | "accepted" | "rejected" | "completed" | "cancelled";
+  assignedAt: string;
+  acceptedAt?: string;
+  rejectedAt?: string;
+  rejectionReason?: string;
+  completedAt?: string;
+};
+
+export type DeliveryProofInput = {
+  recipientName?: string;
+  signatureUrl?: string;
+  photoUrl?: string;
+  notes?: string;
+  deliveredLat?: number;
+  deliveredLng?: number;
+};

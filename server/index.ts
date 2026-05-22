@@ -10,17 +10,21 @@ import {
   assignOrder,
   findUserForLogin,
   getOrderRoute,
+  getDriverForUser,
   listDemandForecast,
+  listDriverAssignments,
   listDrivers,
   listNotifications,
   listOrders,
   mapAuthUser,
+  respondToDriverAssignment,
   tickDriverLocations,
+  updateDriverDeliveryStatus,
   updateStatus
 } from "./db/repositories";
 import { enqueueDispatch } from "./queues/deliveryQueue";
 import { forecastDemand, optimizeAssignments, predictEta } from "./services/ai";
-import type { DeliveryStatus } from "../lib/types";
+import type { DeliveryProofInput, DeliveryStatus } from "../lib/types";
 
 dotenv.config();
 
@@ -28,6 +32,7 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 const port = Number(process.env.PORT ?? 4000);
+const driverDeliveryStatuses = ["picked_up", "in_transit", "delayed", "delivered"] as const;
 
 app.use(cors());
 app.use(express.json());
@@ -55,6 +60,88 @@ app.post("/api/auth/login", async (request, response, next) => {
       token: signToken(safeUser),
       user: safeUser
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/driver/me", requireAuth(["DRIVER"]), async (request, response, next) => {
+  try {
+    const driver = await getDriverForUser((request as AuthenticatedRequest).user.id);
+    if (!driver) {
+      response.status(404).json({ error: "Driver profile not found" });
+      return;
+    }
+
+    response.json({ driver });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/driver/assignments", requireAuth(["DRIVER"]), async (request, response, next) => {
+  try {
+    const assignments = await listDriverAssignments((request as AuthenticatedRequest).user.id);
+    response.json(assignments);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/driver/assignments/:orderId/accept", requireAuth(["DRIVER"]), async (request, response, next) => {
+  try {
+    const orderId = routeParam(request.params.orderId);
+    const result = await respondToDriverAssignment((request as AuthenticatedRequest).user.id, orderId, "accept");
+    if (!result) {
+      response.status(404).json({ error: "Open assignment not found" });
+      return;
+    }
+
+    broadcast({ type: "driver.assignment.accepted", ...result });
+    response.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/driver/assignments/:orderId/reject", requireAuth(["DRIVER"]), async (request, response, next) => {
+  try {
+    const { reason } = request.body as { reason?: string };
+    const orderId = routeParam(request.params.orderId);
+    const result = await respondToDriverAssignment((request as AuthenticatedRequest).user.id, orderId, "reject", reason);
+    if (!result) {
+      response.status(404).json({ error: "Open assignment not found" });
+      return;
+    }
+
+    broadcast({ type: "driver.assignment.rejected", ...result });
+    response.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/api/driver/orders/:orderId/status", requireAuth(["DRIVER"]), async (request, response, next) => {
+  try {
+    const { status, proof } = request.body as {
+      status?: DeliveryStatus;
+      proof?: DeliveryProofInput;
+    };
+
+    if (!isDriverDeliveryStatus(status)) {
+      response.status(400).json({ error: "valid driver delivery status is required" });
+      return;
+    }
+
+    const orderId = routeParam(request.params.orderId);
+    const result = await updateDriverDeliveryStatus((request as AuthenticatedRequest).user.id, orderId, status, proof);
+    if (!result) {
+      response.status(404).json({ error: "Accepted assignment not found" });
+      return;
+    }
+
+    broadcast({ type: "driver.delivery.status", ...result });
+    response.json(result);
   } catch (error) {
     next(error);
   }
@@ -242,6 +329,14 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
   console.error(error);
   response.status(500).json({ error: "Internal server error" });
 });
+
+function routeParam(value: string | string[]) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function isDriverDeliveryStatus(status: DeliveryStatus | undefined): status is (typeof driverDeliveryStatuses)[number] {
+  return Boolean(status && (driverDeliveryStatuses as readonly string[]).includes(status));
+}
 
 server.listen(port, () => {
   console.log(`FleetTrack API listening on http://localhost:${port}`);

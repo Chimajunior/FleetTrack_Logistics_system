@@ -33,6 +33,7 @@ const toneMap = {
 
 async function main() {
   const adminPasswordHash = await hashPassword("FleetTrack2026!");
+  const driverPasswordHash = await hashPassword("Driver2026!");
 
   await prisma.user.upsert({
     where: { email: "admin@fleettrack.local" },
@@ -46,6 +47,28 @@ async function main() {
       role: "ADMIN"
     }
   });
+
+  const driverUsers = new Map<string, string>();
+
+  for (const driver of drivers) {
+    const email = `${driver.id.toLowerCase()}@fleettrack.local`;
+    const user = await prisma.user.upsert({
+      where: { email },
+      update: {
+        name: driver.name,
+        passwordHash: driverPasswordHash,
+        role: "DRIVER"
+      },
+      create: {
+        email,
+        name: driver.name,
+        passwordHash: driverPasswordHash,
+        role: "DRIVER"
+      }
+    });
+
+    driverUsers.set(driver.id, user.id);
+  }
 
   for (const order of orders) {
     await prisma.order.upsert({
@@ -92,6 +115,7 @@ async function main() {
     await prisma.driver.upsert({
       where: { id: driver.id },
       update: {
+        userId: driverUsers.get(driver.id),
         name: driver.name,
         initials: driver.initials,
         status: driverStatusMap[driver.status],
@@ -104,6 +128,7 @@ async function main() {
       },
       create: {
         id: driver.id,
+        userId: driverUsers.get(driver.id),
         name: driver.name,
         initials: driver.initials,
         status: driverStatusMap[driver.status],
