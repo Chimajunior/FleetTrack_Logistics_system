@@ -18,12 +18,14 @@ import {
   listOrders,
   mapAuthUser,
   respondToDriverAssignment,
+  saveRoutePlan,
   tickDriverLocations,
   updateDriverDeliveryStatus,
   updateStatus
 } from "./db/repositories";
 import { enqueueDispatch } from "./queues/deliveryQueue";
 import { forecastDemand, optimizeAssignments, predictEta } from "./services/ai";
+import { planDeliveryRoute } from "./services/routing";
 import type { DeliveryProofInput, DeliveryStatus } from "../lib/types";
 
 dotenv.config();
@@ -193,10 +195,19 @@ app.post("/api/orders/:orderId/assign", async (request, response, next) => {
       return;
     }
 
+    const plannedRoute = await planAndPersistRoute(orderId, driverId);
+    const payload = plannedRoute
+      ? {
+          ...result,
+          order: plannedRoute.order,
+          routePlan: plannedRoute.routePlan
+        }
+      : result;
+
     // Dispatch-side effects run through BullMQ so SMS/email/provider calls can retry safely.
     const queue = await enqueueDispatch({ orderId, driverId });
-    broadcast({ type: "order.assigned", ...result, queue });
-    response.json({ ...result, queue });
+    broadcast({ type: "order.assigned", ...payload, queue });
+    response.json({ ...payload, queue });
   } catch (error) {
     next(error);
   }
@@ -280,6 +291,28 @@ app.get("/api/routes/:orderId", async (request, response, next) => {
   }
 });
 
+app.post("/api/routes/:orderId/optimize", async (request, response, next) => {
+  try {
+    const orderId = routeParam(request.params.orderId);
+    const route = await getOrderRoute(orderId);
+    if (!route) {
+      response.status(404).json({ error: "Order not found" });
+      return;
+    }
+
+    const planned = await planAndPersistRoute(orderId, route.driverId);
+    if (!planned) {
+      response.status(404).json({ error: "Route could not be planned" });
+      return;
+    }
+
+    broadcast({ type: "route.optimized", ...planned });
+    response.json(planned);
+  } catch (error) {
+    next(error);
+  }
+});
+
 wss.on("connection", async (socket, request) => {
   try {
     const token = new URL(request.url ?? "/", "http://localhost").searchParams.get("token");
@@ -336,6 +369,18 @@ function routeParam(value: string | string[]) {
 
 function isDriverDeliveryStatus(status: DeliveryStatus | undefined): status is (typeof driverDeliveryStatuses)[number] {
   return Boolean(status && (driverDeliveryStatuses as readonly string[]).includes(status));
+}
+
+async function planAndPersistRoute(orderId: string, driverId?: string) {
+  const route = await getOrderRoute(orderId);
+  if (!route) return null;
+
+  const routePlan = await planDeliveryRoute({
+    ...route,
+    driverId: driverId ?? route.driverId
+  });
+
+  return saveRoutePlan(routePlan);
 }
 
 server.listen(port, () => {

@@ -807,6 +807,31 @@ small {
   bottom: 18%;
 }
 
+.route-summary {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  display: grid;
+  gap: 3px;
+  min-width: 150px;
+  padding: 10px 12px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(216, 224, 234, 0.9);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(27, 40, 57, 0.12);
+}
+
+.route-summary strong {
+  font-size: 18px;
+}
+
+.route-summary span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
 .driver-list {
   display: grid;
 }

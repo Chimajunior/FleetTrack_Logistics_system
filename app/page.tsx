@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { demandForecast as seedForecast, drivers as seedDrivers, notifications as seedNotifications, orders as seedOrders } from "@/lib/mock-data";
-import type { DeliveryStatus, Driver, DriverStatus, ForecastPoint, NotificationItem, Order } from "@/lib/types";
+import type { DeliveryStatus, Driver, DriverStatus, ForecastPoint, NotificationItem, Order, RoutePlan } from "@/lib/types";
 
 const statusLabels: Record<DeliveryStatus, string> = {
   placed: "Placed",
@@ -54,7 +54,15 @@ function cx(...classes: Array<string | false | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-function FleetMap({ drivers, selectedDriverId }: { drivers: Driver[]; selectedDriverId?: string }) {
+function FleetMap({
+  drivers,
+  routePlan,
+  selectedDriverId
+}: {
+  drivers: Driver[];
+  routePlan?: RoutePlan;
+  selectedDriverId?: string;
+}) {
   const mapRef = useRef<HTMLDivElement>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
   const googleKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
@@ -92,6 +100,21 @@ function FleetMap({ drivers, selectedDriverId }: { drivers: Driver[]; selectedDr
         });
       });
 
+      if (routePlan?.encodedPolyline) {
+        const path = decodePolyline(routePlan.encodedPolyline);
+        const bounds = new google.maps.LatLngBounds();
+
+        path.forEach((point) => bounds.extend(point));
+        new google.maps.Polyline({
+          map,
+          path,
+          strokeColor: "#0b82e6",
+          strokeOpacity: 0.9,
+          strokeWeight: 5
+        });
+        map.fitBounds(bounds, 48);
+      }
+
       setMapLoaded(true);
     }
 
@@ -100,7 +123,7 @@ function FleetMap({ drivers, selectedDriverId }: { drivers: Driver[]; selectedDr
     return () => {
       cancelled = true;
     };
-  }, [drivers, googleKey, selectedDriver]);
+  }, [drivers, googleKey, routePlan, selectedDriver]);
 
   if (googleKey) {
     return (
@@ -133,6 +156,12 @@ function FleetMap({ drivers, selectedDriverId }: { drivers: Driver[]; selectedDr
       <div className="destination-pin">
         <MapPin size={18} />
       </div>
+      {routePlan ? (
+        <div className="route-summary">
+          <strong>{routePlan.etaMinutes} min</strong>
+          <span>{(routePlan.distanceMeters / 1609.34).toFixed(1)} mi · {routePlan.provider === "google-directions" ? "Google" : "Estimate"}</span>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -142,6 +171,7 @@ export default function Dashboard() {
   const [drivers, setDrivers] = useState<Driver[]>(seedDrivers);
   const [notifications, setNotifications] = useState<NotificationItem[]>(seedNotifications);
   const [forecast, setForecast] = useState<ForecastPoint[]>(seedForecast);
+  const [routePlan, setRoutePlan] = useState<RoutePlan | undefined>();
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -242,6 +272,13 @@ export default function Dashboard() {
         if (payload.type === "order.assigned") {
           setOrders((current) => current.map((order) => (order.id === payload.order.id ? payload.order : order)));
           setDrivers((current) => current.map((driver) => (driver.id === payload.driver.id ? payload.driver : driver)));
+          setRoutePlan(payload.routePlan);
+          return;
+        }
+
+        if (payload.type === "route.optimized") {
+          setOrders((current) => current.map((order) => (order.id === payload.order.id ? payload.order : order)));
+          setRoutePlan(payload.routePlan);
           return;
         }
 
@@ -285,6 +322,24 @@ export default function Dashboard() {
       window.clearInterval(fallback);
     };
   }, [token]);
+
+  useEffect(() => {
+    if (!token || !selectedOrderId) return;
+    const authToken = token;
+    let cancelled = false;
+
+    apiRequest<{ routePlan?: RoutePlan }>(`/api/routes/${selectedOrderId}`, authToken)
+      .then((route) => {
+        if (!cancelled) setRoutePlan(route.routePlan);
+      })
+      .catch(() => {
+        if (!cancelled) setRoutePlan(undefined);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedOrderId, token]);
 
   const filteredOrders = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -330,15 +385,27 @@ export default function Dashboard() {
   async function assignDriver(orderId: string, driverId: string) {
     if (!token) return;
 
-    const result = await apiRequest<{ order: Order; driver: Driver }>(`/api/orders/${orderId}/assign`, token, {
+    const result = await apiRequest<{ order: Order; driver: Driver; routePlan?: RoutePlan }>(`/api/orders/${orderId}/assign`, token, {
       method: "POST",
       body: JSON.stringify({ driverId })
     });
 
     setOrders((current) => current.map((order) => (order.id === orderId ? result.order : order)));
     setDrivers((current) => current.map((driver) => (driver.id === driverId ? result.driver : driver)));
+    setRoutePlan(result.routePlan);
     setSelectedOrderId(orderId);
     setSelectedDriverId(driverId);
+  }
+
+  async function optimizeSelectedRoute() {
+    if (!token || !selectedOrder) return;
+
+    const result = await apiRequest<{ order: Order; routePlan: RoutePlan }>(`/api/routes/${selectedOrder.id}/optimize`, token, {
+      method: "POST"
+    });
+
+    setOrders((current) => current.map((order) => (order.id === selectedOrder.id ? result.order : order)));
+    setRoutePlan(result.routePlan);
   }
 
   async function updateOrderStatus(orderId: string, status: DeliveryStatus) {
@@ -567,12 +634,12 @@ export default function Dashboard() {
                   <h2>Live Tracking</h2>
                   <p>{selectedDriver?.name} · {selectedDriver?.vehicle}</p>
                 </div>
-                <button className="secondary-button">
+                <button className="secondary-button" onClick={optimizeSelectedRoute}>
                   <Navigation size={17} />
                   Optimize
                 </button>
               </div>
-              <FleetMap drivers={drivers} selectedDriverId={selectedDriver?.id} />
+              <FleetMap drivers={drivers} routePlan={routePlan} selectedDriverId={selectedDriver?.id} />
             </div>
 
             <div className="panel drivers-panel">
@@ -779,4 +846,44 @@ function initials(name: string) {
     .join("")
     .slice(0, 2)
     .toUpperCase();
+}
+
+function decodePolyline(encoded: string) {
+  const points: Array<{ lat: number; lng: number }> = [];
+  let index = 0;
+  let lat = 0;
+  let lng = 0;
+
+  while (index < encoded.length) {
+    const latitude = decodeCoordinate(encoded, index);
+    index = latitude.nextIndex;
+    lat += latitude.value;
+
+    const longitude = decodeCoordinate(encoded, index);
+    index = longitude.nextIndex;
+    lng += longitude.value;
+
+    points.push({ lat: lat / 100000, lng: lng / 100000 });
+  }
+
+  return points;
+}
+
+function decodeCoordinate(encoded: string, startIndex: number) {
+  let result = 0;
+  let shift = 0;
+  let index = startIndex;
+  let byte: number;
+
+  do {
+    byte = encoded.charCodeAt(index) - 63;
+    index += 1;
+    result |= (byte & 0x1f) << shift;
+    shift += 5;
+  } while (byte >= 0x20);
+
+  return {
+    value: result & 1 ? ~(result >> 1) : result >> 1,
+    nextIndex: index
+  };
 }

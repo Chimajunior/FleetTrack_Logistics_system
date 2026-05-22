@@ -75,3 +75,22 @@ export type DeliveryProofInput = {
   deliveredLat?: number;
   deliveredLng?: number;
 };
+
+export type RoutePlan = {
+  id?: string;
+  orderId: string;
+  driverId?: string;
+  encodedPolyline?: string;
+  distanceMeters: number;
+  etaMinutes: number;
+  provider: "google-directions" | "internal-fallback";
+  createdAt?: string;
+};
+
+export type OrderRoute = {
+  orderId: string;
+  driverId?: string;
+  origin: LatLng;
+  destination: LatLng;
+  routePlan?: RoutePlan;
+};

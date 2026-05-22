@@ -8,7 +8,9 @@ import type {
   ForecastPoint,
   NotificationItem,
   Order,
-  Priority
+  OrderRoute,
+  Priority,
+  RoutePlan
 } from "../../lib/types";
 import type { AuthUser } from "../auth/tokens";
 
@@ -96,6 +98,17 @@ type NotificationRecord = {
 type DemandForecastRecord = {
   window: string;
   orders: number;
+};
+
+type RoutePlanRecord = {
+  id: string;
+  orderId: string;
+  driverId: string | null;
+  encodedPolyline: string | null;
+  distanceMeters: number | null;
+  etaMinutes: number | null;
+  provider: string;
+  createdAt: Date;
 };
 
 type AssignmentRecord = {
@@ -513,6 +526,43 @@ export async function updateStatus(orderId: string, status: DeliveryStatus) {
   return result ? mapOrder(result) : null;
 }
 
+export async function saveRoutePlan(plan: RoutePlan) {
+  const result = await prisma.$transaction(async (tx) => {
+    const [routePlan, order] = await Promise.all([
+      tx.routePlan.create({
+        data: {
+          orderId: plan.orderId,
+          driverId: plan.driverId,
+          encodedPolyline: plan.encodedPolyline,
+          distanceMeters: plan.distanceMeters,
+          etaMinutes: plan.etaMinutes,
+          provider: plan.provider,
+          metadata: {
+            source: plan.provider,
+            generatedAt: new Date().toISOString()
+          }
+        }
+      }),
+      tx.order.update({
+        where: { id: plan.orderId },
+        data: {
+          etaMinutes: plan.etaMinutes
+        }
+      })
+    ]);
+
+    return {
+      routePlan,
+      order
+    };
+  });
+
+  return {
+    routePlan: mapRoutePlan(result.routePlan),
+    order: mapOrder(result.order)
+  };
+}
+
 export async function tickDriverLocations(): Promise<Driver[]> {
   const assignedDrivers = await prisma.driver.findMany({
     where: { status: prismaDriverStatus.assigned }
@@ -554,10 +604,16 @@ export async function tickDriverLocations(): Promise<Driver[]> {
   return updatedDrivers.map(mapDriver);
 }
 
-export async function getOrderRoute(orderId: string) {
+export async function getOrderRoute(orderId: string): Promise<OrderRoute | null> {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
-    include: { driver: true }
+    include: {
+      driver: true,
+      routePlans: {
+        orderBy: { createdAt: "desc" },
+        take: 1
+      }
+    }
   });
 
   if (!order) return null;
@@ -574,7 +630,8 @@ export async function getOrderRoute(orderId: string) {
     destination: {
       lat: order.destinationLat,
       lng: order.destinationLng
-    }
+    },
+    routePlan: order.routePlans[0] ? mapRoutePlan(order.routePlans[0]) : undefined
   };
 }
 
@@ -622,6 +679,19 @@ function mapNotification(record: NotificationRecord): NotificationItem {
     body: record.body,
     tone: record.tone.toLowerCase() as NotificationItem["tone"],
     time: relativeMinutes(record.createdAt)
+  };
+}
+
+function mapRoutePlan(record: RoutePlanRecord): RoutePlan {
+  return {
+    id: record.id,
+    orderId: record.orderId,
+    driverId: record.driverId ?? undefined,
+    encodedPolyline: record.encodedPolyline ?? undefined,
+    distanceMeters: record.distanceMeters ?? 0,
+    etaMinutes: record.etaMinutes ?? 0,
+    provider: record.provider === "google-directions" ? "google-directions" : "internal-fallback",
+    createdAt: record.createdAt.toISOString()
   };
 }
 

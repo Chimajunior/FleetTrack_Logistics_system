@@ -54,3 +54,11 @@ postgresql://fleettrack:fleettrack@localhost:5432/fleettrack
 Prisma 7 keeps the database URL in `prisma.config.ts`, while the runtime client uses the PostgreSQL adapter in `server/db/prisma.ts`.
 
 The admin UI and API are now database-backed. If Postgres is not running or the database has not been migrated and seeded, login and operational API calls will fail.
+
+Route plans are stored in `route_plans`. With `GOOGLE_MAPS_API_KEY` configured, the API stores Google Directions distance, duration, and encoded polyline data. Without a key, it stores an internal fallback estimate so development workflows still work.
+
+Route planning happens when:
+
+- an admin assigns a driver to an order;
+- an admin calls `POST /api/routes/:orderId/optimize`;
+- the frontend user clicks the Optimize action for a selected order.
