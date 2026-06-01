@@ -42,6 +42,13 @@ const statusLabels: Record<DeliveryStatus, string> = {
 
 const statusFlow: DeliveryStatus[] = ["placed", "assigned", "picked_up", "in_transit", "delivered"];
 const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+const localDemoToken = "fleettrack-local-demo";
+const localDemoUser: AuthUser = {
+  id: "local-admin",
+  email: "admin@fleettrack.local",
+  name: "John Doe",
+  role: "ADMIN"
+};
 
 type AuthUser = {
   id: string;
@@ -191,6 +198,13 @@ export default function Dashboard() {
       return;
     }
 
+    if (isLocalDemoToken(savedToken)) {
+      setToken(savedToken);
+      setUser(localDemoUser);
+      setAuthReady(true);
+      return;
+    }
+
     apiRequest<{ user: AuthUser }>("/api/auth/me", savedToken)
       .then(({ user }) => {
         setToken(savedToken);
@@ -209,6 +223,15 @@ export default function Dashboard() {
     let cancelled = false;
 
     async function loadDashboard() {
+      if (isLocalDemoToken(authToken)) {
+        setOrders(seedOrders);
+        setDrivers(seedDrivers);
+        setNotifications(seedNotifications);
+        setForecast(seedForecast);
+        setLoadError("");
+        return;
+      }
+
       try {
         const [nextOrders, nextDrivers, nextNotifications, nextForecast] = await Promise.all([
           apiRequest<Order[]>("/api/orders", authToken),
@@ -246,57 +269,68 @@ export default function Dashboard() {
       return;
     }
 
+    const isLocalDemo = isLocalDemoToken(token);
     const url = process.env.NEXT_PUBLIC_WS_URL;
-    if (!url) {
-      setWsStatus("offline");
-      return;
-    }
-
     let socket: WebSocket | undefined;
 
-    try {
-      const wsUrl = new URL(url);
-      wsUrl.searchParams.set("token", token);
-
-      socket = new WebSocket(wsUrl.toString());
-      socket.onopen = () => setWsStatus("live");
-      socket.onerror = () => setWsStatus("offline");
-      socket.onclose = () => setWsStatus("offline");
-      socket.onmessage = (event) => {
-        const payload = JSON.parse(event.data);
-        if (payload.type === "connected") {
-          setDrivers(payload.drivers);
-          return;
-        }
-
-        if (payload.type === "order.assigned") {
-          setOrders((current) => current.map((order) => (order.id === payload.order.id ? payload.order : order)));
-          setDrivers((current) => current.map((driver) => (driver.id === payload.driver.id ? payload.driver : driver)));
-          setRoutePlan(payload.routePlan);
-          return;
-        }
-
-        if (payload.type === "route.optimized") {
-          setOrders((current) => current.map((order) => (order.id === payload.order.id ? payload.order : order)));
-          setRoutePlan(payload.routePlan);
-          return;
-        }
-
-        if (payload.type === "order.status") {
-          setOrders((current) => current.map((order) => (order.id === payload.order.id ? payload.order : order)));
-          return;
-        }
-
-        if (payload.type !== "driver.location") return;
-
-        setDrivers((current) =>
-          current.map((driver) =>
-            driver.id === payload.driverId ? { ...driver, location: payload.location, routeProgress: payload.progress } : driver
-          )
-        );
-      };
-    } catch {
+    if (!url || isLocalDemo) {
       setWsStatus("offline");
+    } else {
+      try {
+        const wsUrl = new URL(url);
+        wsUrl.searchParams.set("token", token);
+
+        socket = new WebSocket(wsUrl.toString());
+        socket.onopen = () => setWsStatus("live");
+        socket.onerror = () => setWsStatus("offline");
+        socket.onclose = () => setWsStatus("offline");
+        socket.onmessage = (event) => {
+          const payload = JSON.parse(event.data);
+          if (payload.type === "connected") {
+            setDrivers(payload.drivers);
+            return;
+          }
+
+          if (payload.type === "order.assigned") {
+            setOrders((current) => current.map((order) => (order.id === payload.order.id ? payload.order : order)));
+            setDrivers((current) => current.map((driver) => (driver.id === payload.driver.id ? payload.driver : driver)));
+            setRoutePlan(payload.routePlan);
+            return;
+          }
+
+          if (payload.type === "order.created") {
+            setOrders((current) => [payload.order, ...current.filter((order) => order.id !== payload.order.id)]);
+            setSelectedOrderId(payload.order.id);
+            return;
+          }
+
+          if (payload.type === "notification.created") {
+            setNotifications((current) => [payload.notification, ...current.filter((item) => item.id !== payload.notification.id)]);
+            return;
+          }
+
+          if (payload.type === "route.optimized") {
+            setOrders((current) => current.map((order) => (order.id === payload.order.id ? payload.order : order)));
+            setRoutePlan(payload.routePlan);
+            return;
+          }
+
+          if (payload.type === "order.status") {
+            setOrders((current) => current.map((order) => (order.id === payload.order.id ? payload.order : order)));
+            return;
+          }
+
+          if (payload.type !== "driver.location") return;
+
+          setDrivers((current) =>
+            current.map((driver) =>
+              driver.id === payload.driverId ? { ...driver, location: payload.location, routeProgress: payload.progress } : driver
+            )
+          );
+        };
+      } catch {
+        setWsStatus("offline");
+      }
     }
 
     // The UI still animates without the API server, which keeps frontend work unblocked.
@@ -324,7 +358,16 @@ export default function Dashboard() {
   }, [token]);
 
   useEffect(() => {
-    if (!token || !selectedOrderId) return;
+    if (!token || !selectedOrderId || !isLocalDemoToken(token)) return;
+
+    const order = orders.find((item) => item.id === selectedOrderId);
+    const driver = drivers.find((item) => item.id === order?.driverId);
+    setRoutePlan(order && driver ? createLocalRoutePlan(order, driver) : undefined);
+  }, [drivers, orders, selectedOrderId, token]);
+
+  useEffect(() => {
+    if (!token || !selectedOrderId || isLocalDemoToken(token)) return;
+
     const authToken = token;
     let cancelled = false;
 
@@ -360,6 +403,12 @@ export default function Dashboard() {
 
   async function handleLogin(email: string, password: string) {
     setAuthError("");
+    const isSeededDemoLogin = email.toLowerCase() === localDemoUser.email && password === "FleetTrack2026!";
+
+    if (isSeededDemoLogin && !(await apiReady())) {
+      signInToLocalDemo();
+      return;
+    }
 
     try {
       const result = await apiRequest<{ token: string; user: AuthUser }>("/api/auth/login", undefined, {
@@ -371,8 +420,19 @@ export default function Dashboard() {
       setToken(result.token);
       setUser(result.user);
     } catch {
+      if (isSeededDemoLogin) {
+        signInToLocalDemo();
+        return;
+      }
+
       setAuthError("Invalid credentials or API unavailable.");
     }
+  }
+
+  function signInToLocalDemo() {
+    window.localStorage.setItem("fleettrack_token", localDemoToken);
+    setToken(localDemoToken);
+    setUser(localDemoUser);
   }
 
   function handleLogout() {
@@ -385,38 +445,207 @@ export default function Dashboard() {
   async function assignDriver(orderId: string, driverId: string) {
     if (!token) return;
 
-    const result = await apiRequest<{ order: Order; driver: Driver; routePlan?: RoutePlan }>(`/api/orders/${orderId}/assign`, token, {
-      method: "POST",
-      body: JSON.stringify({ driverId })
-    });
+    if (isLocalDemoToken(token)) {
+      assignDriverLocally(orderId, driverId);
+      return;
+    }
 
-    setOrders((current) => current.map((order) => (order.id === orderId ? result.order : order)));
-    setDrivers((current) => current.map((driver) => (driver.id === driverId ? result.driver : driver)));
-    setRoutePlan(result.routePlan);
-    setSelectedOrderId(orderId);
-    setSelectedDriverId(driverId);
+    try {
+      const result = await apiRequest<{ order: Order; driver: Driver; routePlan?: RoutePlan }>(`/api/orders/${orderId}/assign`, token, {
+        method: "POST",
+        body: JSON.stringify({ driverId })
+      });
+
+      setOrders((current) => current.map((order) => (order.id === orderId ? result.order : order)));
+      setDrivers((current) => current.map((driver) => (driver.id === driverId ? result.driver : driver)));
+      setRoutePlan(result.routePlan);
+      setSelectedOrderId(orderId);
+      setSelectedDriverId(driverId);
+    } catch {
+      assignDriverLocally(orderId, driverId);
+      setLoadError("Live API unavailable. Changes are being previewed locally.");
+    }
   }
 
   async function optimizeSelectedRoute() {
     if (!token || !selectedOrder) return;
 
-    const result = await apiRequest<{ order: Order; routePlan: RoutePlan }>(`/api/routes/${selectedOrder.id}/optimize`, token, {
-      method: "POST"
-    });
+    const driver = drivers.find((item) => item.id === selectedOrder.driverId) ?? selectedDriver;
+    if (isLocalDemoToken(token)) {
+      setRoutePlan(createLocalRoutePlan(selectedOrder, driver));
+      return;
+    }
 
-    setOrders((current) => current.map((order) => (order.id === selectedOrder.id ? result.order : order)));
-    setRoutePlan(result.routePlan);
+    try {
+      const result = await apiRequest<{ order: Order; routePlan: RoutePlan }>(`/api/routes/${selectedOrder.id}/optimize`, token, {
+        method: "POST"
+      });
+
+      setOrders((current) => current.map((order) => (order.id === selectedOrder.id ? result.order : order)));
+      setRoutePlan(result.routePlan);
+    } catch {
+      setRoutePlan(createLocalRoutePlan(selectedOrder, driver));
+      setLoadError("Live API unavailable. Route optimization is being previewed locally.");
+    }
   }
 
   async function updateOrderStatus(orderId: string, status: DeliveryStatus) {
     if (!token) return;
 
-    const order = await apiRequest<Order>(`/api/orders/${orderId}/status`, token, {
-      method: "PATCH",
-      body: JSON.stringify({ status })
-    });
+    if (isLocalDemoToken(token)) {
+      updateOrderStatusLocally(orderId, status);
+      return;
+    }
 
-    setOrders((current) => current.map((item) => (item.id === orderId ? order : item)));
+    try {
+      const order = await apiRequest<Order>(`/api/orders/${orderId}/status`, token, {
+        method: "PATCH",
+        body: JSON.stringify({ status })
+      });
+
+      setOrders((current) => current.map((item) => (item.id === orderId ? order : item)));
+    } catch {
+      updateOrderStatusLocally(orderId, status);
+      setLoadError("Live API unavailable. Status changes are being previewed locally.");
+    }
+  }
+
+  async function createQuickOrder() {
+    const sequence = String(orders.length + 1).padStart(3, "0");
+    const id = `ORD-2026-${sequence}`;
+    const order: Order = {
+      id,
+      customer: "New Customer",
+      phone: "+1 (555) 010-2026",
+      address: "125 Dispatch Avenue, Loading Bay 2",
+      items: 2,
+      weightKg: 1.8,
+      status: "placed",
+      priority: "standard",
+      placedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
+      eta: "Unassigned",
+      destination: {
+        lat: 40.72 + orders.length * 0.002,
+        lng: -73.99 - orders.length * 0.002
+      }
+    };
+
+    if (!token || isLocalDemoToken(token)) {
+      addOrderLocally(order);
+      return;
+    }
+
+    try {
+      const created = await apiRequest<Order>("/api/orders", token, {
+        method: "POST",
+        body: JSON.stringify({
+          id: order.id,
+          customer: order.customer,
+          phone: order.phone,
+          address: order.address,
+          items: order.items,
+          weightKg: order.weightKg,
+          priority: order.priority,
+          destination: order.destination
+        })
+      });
+      addOrderLocally(created);
+      setLoadError("");
+    } catch {
+      addOrderLocally(order);
+      setLoadError("Order creation is staged locally until the live create-order API is connected.");
+    }
+  }
+
+  async function sendCustomerUpdate() {
+    if (!selectedOrder) return;
+
+    const notification: NotificationItem = {
+      id: `LOCAL-NOT-${Date.now()}`,
+      title: "Customer update sent",
+      body: `${selectedOrder.customer} was notified about ${selectedOrder.id}.`,
+      time: "now",
+      tone: "success"
+    };
+
+    if (!token || isLocalDemoToken(token)) {
+      addNotificationLocally(notification);
+      return;
+    }
+
+    try {
+      const created = await apiRequest<NotificationItem>("/api/notifications", token, {
+        method: "POST",
+        body: JSON.stringify({
+          title: notification.title,
+          body: notification.body,
+          tone: notification.tone
+        })
+      });
+      addNotificationLocally(created);
+      setLoadError("");
+    } catch {
+      addNotificationLocally(notification);
+      setLoadError("Live API unavailable. Customer notification is being previewed locally.");
+    }
+  }
+
+  function addOrderLocally(order: Order) {
+    setOrders((current) => [order, ...current.filter((item) => item.id !== order.id)]);
+    setSelectedOrderId(order.id);
+    setRoutePlan(undefined);
+  }
+
+  function addNotificationLocally(notification: NotificationItem) {
+    setNotifications((current) => [notification, ...current.filter((item) => item.id !== notification.id)]);
+  }
+
+  function assignDriverLocally(orderId: string, driverId: string) {
+    const order = orders.find((item) => item.id === orderId);
+    const driver = drivers.find((item) => item.id === driverId);
+    if (!order || !driver) return;
+
+    const updatedOrder = {
+      ...order,
+      driverId,
+      status: "assigned" as DeliveryStatus,
+      eta: order.eta === "Unassigned" ? "24 min" : order.eta
+    };
+    const updatedDriver = {
+      ...driver,
+      status: "assigned" as DriverStatus,
+      activeOrderId: orderId,
+      routeProgress: Math.max(driver.routeProgress, 8)
+    };
+
+    setOrders((current) => current.map((item) => (item.id === orderId ? updatedOrder : item)));
+    setDrivers((current) => current.map((item) => (item.id === driverId ? updatedDriver : item)));
+    setRoutePlan(createLocalRoutePlan(updatedOrder, updatedDriver));
+    setSelectedOrderId(orderId);
+    setSelectedDriverId(driverId);
+  }
+
+  function updateOrderStatusLocally(orderId: string, status: DeliveryStatus) {
+    const order = orders.find((item) => item.id === orderId);
+    if (!order) return;
+
+    const eta = status === "delivered" ? "Delivered" : order.eta === "Delivered" ? "12 min" : order.eta;
+    setOrders((current) => current.map((item) => (item.id === orderId ? { ...item, status, eta } : item)));
+
+    if (!order.driverId) return;
+
+    setDrivers((current) =>
+      current.map((driver) =>
+        driver.id === order.driverId
+          ? {
+              ...driver,
+              status: status === "delivered" ? "available" : "assigned",
+              activeOrderId: status === "delivered" ? undefined : orderId,
+              routeProgress: status === "delivered" ? 100 : Math.max(driver.routeProgress, statusProgress(status))
+            }
+          : driver
+      )
+    );
   }
 
   const navItems = [
@@ -509,7 +738,7 @@ export default function Dashboard() {
               <h1>{section}</h1>
               <p>Orders, drivers, routes, and delivery risk in one live operations panel.</p>
             </div>
-            <button className="primary-button">
+            <button className="primary-button" onClick={createQuickOrder}>
               <PackagePlus size={18} />
               New order
             </button>
@@ -716,7 +945,7 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
-              <button className="wide-button">
+              <button className="wide-button" onClick={sendCustomerUpdate}>
                 <Send size={16} />
                 Send customer update
               </button>
@@ -839,6 +1068,15 @@ async function apiRequest<T>(path: string, token?: string, init: RequestInit = {
   return response.json() as Promise<T>;
 }
 
+async function apiReady() {
+  try {
+    const response = await fetch(`${apiBase}/ready`);
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 function initials(name: string) {
   return name
     .split(" ")
@@ -846,6 +1084,54 @@ function initials(name: string) {
     .join("")
     .slice(0, 2)
     .toUpperCase();
+}
+
+function isLocalDemoToken(token: string | null | undefined) {
+  return token === localDemoToken;
+}
+
+function createLocalRoutePlan(order: Order, driver?: Driver): RoutePlan {
+  const origin = driver?.location ?? seedDrivers[0]?.location ?? order.destination;
+  const distanceMeters = Math.max(1200, Math.round(distanceBetween(origin, order.destination)));
+  const etaMinutes = Math.max(6, Math.round(distanceMeters / 520));
+
+  return {
+    id: `local-${order.id}`,
+    orderId: order.id,
+    driverId: driver?.id ?? order.driverId,
+    distanceMeters,
+    etaMinutes,
+    provider: "internal-fallback",
+    createdAt: new Date().toISOString()
+  };
+}
+
+function distanceBetween(origin: { lat: number; lng: number }, destination: { lat: number; lng: number }) {
+  const earthRadiusMeters = 6371000;
+  const latA = toRadians(origin.lat);
+  const latB = toRadians(destination.lat);
+  const deltaLat = toRadians(destination.lat - origin.lat);
+  const deltaLng = toRadians(destination.lng - origin.lng);
+  const a = Math.sin(deltaLat / 2) ** 2 + Math.cos(latA) * Math.cos(latB) * Math.sin(deltaLng / 2) ** 2;
+
+  return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function toRadians(value: number) {
+  return (value * Math.PI) / 180;
+}
+
+function statusProgress(status: DeliveryStatus) {
+  const progress: Record<DeliveryStatus, number> = {
+    placed: 0,
+    assigned: 10,
+    picked_up: 35,
+    in_transit: 70,
+    delivered: 100,
+    delayed: 55
+  };
+
+  return progress[status];
 }
 
 function decodePolyline(encoded: string) {

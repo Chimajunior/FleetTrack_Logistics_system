@@ -8,6 +8,9 @@ import { verifyPassword } from "./auth/password";
 import { signToken, verifyToken } from "./auth/tokens";
 import {
   assignOrder,
+  checkDatabase,
+  createNotification,
+  createOrder,
   findUserForLogin,
   getOrderRoute,
   getDriverForUser,
@@ -41,6 +44,23 @@ app.use(express.json());
 
 app.get("/health", (_request, response) => {
   response.json({ ok: true, service: "fleettrack-api" });
+});
+
+app.get("/ready", async (_request, response) => {
+  try {
+    await checkDatabase();
+    response.json({
+      ok: true,
+      service: "fleettrack-api",
+      database: "ready"
+    });
+  } catch {
+    response.status(503).json({
+      ok: false,
+      service: "fleettrack-api",
+      database: "unavailable"
+    });
+  }
 });
 
 app.post("/api/auth/login", async (request, response, next) => {
@@ -163,6 +183,59 @@ app.get("/api/orders", async (_request, response, next) => {
   }
 });
 
+app.post("/api/orders", async (request, response, next) => {
+  try {
+    const { id, customer, phone, address, items, weightKg, priority, destination } = request.body as {
+      id?: string;
+      customer?: string;
+      phone?: string;
+      address?: string;
+      items?: number;
+      weightKg?: number;
+      priority?: string;
+      destination?: { lat?: number; lng?: number };
+    };
+
+    if (
+      !customer ||
+      !phone ||
+      !address ||
+      typeof items !== "number" ||
+      !Number.isFinite(items) ||
+      typeof weightKg !== "number" ||
+      !Number.isFinite(weightKg) ||
+      !isPriority(priority) ||
+      !destination ||
+      typeof destination.lat !== "number" ||
+      !Number.isFinite(destination.lat) ||
+      typeof destination.lng !== "number" ||
+      !Number.isFinite(destination.lng)
+    ) {
+      response.status(400).json({ error: "valid order details are required" });
+      return;
+    }
+
+    const order = await createOrder({
+      id,
+      customer,
+      phone,
+      address,
+      items,
+      weightKg,
+      priority,
+      destination: {
+        lat: destination.lat,
+        lng: destination.lng
+      }
+    });
+
+    broadcast({ type: "order.created", order });
+    response.status(201).json(order);
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/drivers", async (_request, response, next) => {
   try {
     response.json(await listDrivers());
@@ -174,6 +247,32 @@ app.get("/api/drivers", async (_request, response, next) => {
 app.get("/api/notifications", async (_request, response, next) => {
   try {
     response.json(await listNotifications());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/notifications", async (request, response, next) => {
+  try {
+    const { title, body, tone } = request.body as {
+      title?: string;
+      body?: string;
+      tone?: string;
+    };
+
+    if (!title || !body || (tone && !["info", "success", "warning"].includes(tone))) {
+      response.status(400).json({ error: "valid notification details are required" });
+      return;
+    }
+
+    const notification = await createNotification({
+      title,
+      body,
+      tone: tone as "info" | "success" | "warning" | undefined
+    });
+
+    broadcast({ type: "notification.created", notification });
+    response.status(201).json(notification);
   } catch (error) {
     next(error);
   }
@@ -338,10 +437,15 @@ function broadcast(payload: unknown) {
   });
 }
 
+let telemetryErrorLogged = false;
+
 // Broadcast driver telemetry as small events; clients merge these into their local driver state.
 setInterval(async () => {
+  if (wss.clients.size === 0) return;
+
   try {
     const drivers = await tickDriverLocations();
+    telemetryErrorLogged = false;
     drivers
       .filter((driver) => driver.status === "assigned")
       .forEach((driver) => {
@@ -353,6 +457,8 @@ setInterval(async () => {
         });
       });
   } catch (error) {
+    if (telemetryErrorLogged) return;
+    telemetryErrorLogged = true;
     console.error("Failed to publish driver telemetry", error);
   }
 }, 3000);
@@ -369,6 +475,10 @@ function routeParam(value: string | string[]) {
 
 function isDriverDeliveryStatus(status: DeliveryStatus | undefined): status is (typeof driverDeliveryStatuses)[number] {
   return Boolean(status && (driverDeliveryStatuses as readonly string[]).includes(status));
+}
+
+function isPriority(priority: string | undefined): priority is "standard" | "express" | "critical" {
+  return Boolean(priority && ["standard", "express", "critical"].includes(priority));
 }
 
 async function planAndPersistRoute(orderId: string, driverId?: string) {

@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { Client } from "pg";
 import { prisma } from "./prisma";
 import type {
   DeliveryProofInput,
@@ -123,12 +125,84 @@ type AssignmentRecord = {
   driver: DriverRecord;
 };
 
+type CreateOrderInput = {
+  id?: string;
+  customer: string;
+  phone: string;
+  address: string;
+  items: number;
+  weightKg: number;
+  priority: Priority;
+  destination: {
+    lat: number;
+    lng: number;
+  };
+};
+
+type CreateNotificationInput = {
+  title: string;
+  body: string;
+  tone?: NotificationItem["tone"];
+};
+
 export async function listOrders(): Promise<Order[]> {
   const records = await prisma.order.findMany({
     orderBy: { placedAt: "desc" }
   });
 
   return records.map(mapOrder);
+}
+
+export async function checkDatabase() {
+  const client = new Client({
+    connectionString: process.env.DATABASE_URL
+  });
+
+  await client.connect();
+  try {
+    await client.query("SELECT 1");
+  } finally {
+    await client.end();
+  }
+}
+
+export async function createOrder(input: CreateOrderInput): Promise<Order> {
+  const orderId = input.id ?? (await nextOrderId());
+
+  const order = await prisma.$transaction(async (tx) => {
+    const created = await tx.order.create({
+      data: {
+        id: orderId,
+        customer: input.customer,
+        phone: input.phone,
+        address: input.address,
+        items: input.items,
+        weightKg: input.weightKg,
+        priority: input.priority.toUpperCase() as "STANDARD" | "EXPRESS" | "CRITICAL",
+        status: prismaStatus.placed,
+        destinationLat: input.destination.lat,
+        destinationLng: input.destination.lng
+      }
+    });
+
+    await tx.$executeRaw`
+      UPDATE orders
+      SET destination_point = ST_SetSRID(ST_MakePoint(${input.destination.lng}, ${input.destination.lat}), 4326)::geography
+      WHERE id = ${orderId}
+    `;
+
+    await tx.deliveryStatusEvent.create({
+      data: {
+        orderId,
+        status: prismaStatus.placed,
+        note: "Order created"
+      }
+    });
+
+    return created;
+  });
+
+  return mapOrder(order);
 }
 
 export async function listDrivers(): Promise<Driver[]> {
@@ -146,6 +220,20 @@ export async function listNotifications(): Promise<NotificationItem[]> {
   });
 
   return records.map(mapNotification);
+}
+
+export async function createNotification(input: CreateNotificationInput): Promise<NotificationItem> {
+  const tone = input.tone ?? "info";
+  const record = await prisma.notification.create({
+    data: {
+      id: `NOT-${randomUUID()}`,
+      title: input.title,
+      body: input.body,
+      tone: tone.toUpperCase() as "INFO" | "SUCCESS" | "WARNING"
+    }
+  });
+
+  return mapNotification(record);
 }
 
 export async function listDemandForecast(): Promise<ForecastPoint[]> {
@@ -719,4 +807,17 @@ function nextProgress(status: DeliveryStatus, current: number) {
 function relativeMinutes(date: Date) {
   const minutes = Math.max(1, Math.round((Date.now() - date.getTime()) / 60000));
   return `${minutes} min`;
+}
+
+async function nextOrderId() {
+  const year = new Date().getFullYear();
+  const count = await prisma.order.count({
+    where: {
+      id: {
+        startsWith: `ORD-${year}-`
+      }
+    }
+  });
+
+  return `ORD-${year}-${String(count + 1).padStart(3, "0")}`;
 }
