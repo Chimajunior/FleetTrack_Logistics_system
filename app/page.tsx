@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { demandForecast as seedForecast, drivers as seedDrivers, notifications as seedNotifications, orders as seedOrders } from "@/lib/mock-data";
-import type { DeliveryStatus, Driver, DriverStatus, ForecastPoint, NotificationItem, Order, RoutePlan } from "@/lib/types";
+import type { DeliveryStatus, Driver, DriverAssignment, DriverStatus, ForecastPoint, NotificationItem, Order, RoutePlan } from "@/lib/types";
 
 const statusLabels: Record<DeliveryStatus, string> = {
   placed: "Placed",
@@ -43,18 +43,38 @@ const statusLabels: Record<DeliveryStatus, string> = {
 const statusFlow: DeliveryStatus[] = ["placed", "assigned", "picked_up", "in_transit", "delivered"];
 const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 const localDemoToken = "fleettrack-local-demo";
+const localDriverDemoToken = "fleettrack-local-driver-demo";
 const localDemoUser: AuthUser = {
   id: "local-admin",
   email: "admin@fleettrack.local",
   name: "John Doe",
   role: "ADMIN"
 };
+const localDriverDemoUser: AuthUser = {
+  id: "local-driver",
+  email: "drv-01@fleettrack.local",
+  name: "Maya Stone",
+  role: "DRIVER"
+};
+const localDriverId = "DRV-01";
+const driverStatusFlow: Array<Extract<DeliveryStatus, "picked_up" | "in_transit" | "delayed" | "delivered">> = [
+  "picked_up",
+  "in_transit",
+  "delayed",
+  "delivered"
+];
 
 type AuthUser = {
   id: string;
   email: string;
   name: string;
   role: "ADMIN" | "DISPATCHER" | "DRIVER";
+};
+
+type DriverWorkflowResult = {
+  assignment: DriverAssignment;
+  order: Order;
+  driver: Driver;
 };
 
 function cx(...classes: Array<string | false | undefined>) {
@@ -190,6 +210,9 @@ export default function Dashboard() {
   const [section, setSection] = useState("Dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [wsStatus, setWsStatus] = useState<"connecting" | "live" | "offline">("connecting");
+  const [driverProfile, setDriverProfile] = useState<Driver | null>(null);
+  const [driverAssignments, setDriverAssignments] = useState<DriverAssignment[]>([]);
+  const [driverNotice, setDriverNotice] = useState("");
 
   useEffect(() => {
     const savedToken = window.localStorage.getItem("fleettrack_token");
@@ -201,6 +224,13 @@ export default function Dashboard() {
     if (isLocalDemoToken(savedToken)) {
       setToken(savedToken);
       setUser(localDemoUser);
+      setAuthReady(true);
+      return;
+    }
+
+    if (isLocalDriverDemoToken(savedToken)) {
+      setToken(savedToken);
+      setUser(localDriverDemoUser);
       setAuthReady(true);
       return;
     }
@@ -217,7 +247,7 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || user?.role === "DRIVER") return;
     const authToken = token;
 
     let cancelled = false;
@@ -261,7 +291,44 @@ export default function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, user?.role]);
+
+  useEffect(() => {
+    if (!token || user?.role !== "DRIVER") return;
+    const authToken = token;
+
+    if (isLocalDriverDemoToken(authToken)) {
+      setDriverProfile(seedDrivers.find((driver) => driver.id === localDriverId) ?? null);
+      setDriverAssignments(createLocalDriverAssignments());
+      setDriverNotice("");
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadDriverWorkspace() {
+      try {
+        const [{ driver }, assignments] = await Promise.all([
+          apiRequest<{ driver: Driver }>("/api/driver/me", authToken),
+          apiRequest<DriverAssignment[]>("/api/driver/assignments", authToken)
+        ]);
+
+        if (cancelled) return;
+
+        setDriverProfile(driver);
+        setDriverAssignments(assignments);
+        setDriverNotice("");
+      } catch {
+        if (!cancelled) setDriverNotice("Unable to load live driver assignments. Check the API and database.");
+      }
+    }
+
+    loadDriverWorkspace();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token, user?.role]);
 
   useEffect(() => {
     if (!token) {
@@ -269,7 +336,7 @@ export default function Dashboard() {
       return;
     }
 
-    const isLocalDemo = isLocalDemoToken(token);
+    const isLocalDemo = isLocalDemoToken(token) || isLocalDriverDemoToken(token);
     const url = process.env.NEXT_PUBLIC_WS_URL;
     let socket: WebSocket | undefined;
 
@@ -358,15 +425,15 @@ export default function Dashboard() {
   }, [token]);
 
   useEffect(() => {
-    if (!token || !selectedOrderId || !isLocalDemoToken(token)) return;
+    if (!token || user?.role === "DRIVER" || !selectedOrderId || !isLocalDemoToken(token)) return;
 
     const order = orders.find((item) => item.id === selectedOrderId);
     const driver = drivers.find((item) => item.id === order?.driverId);
     setRoutePlan(order && driver ? createLocalRoutePlan(order, driver) : undefined);
-  }, [drivers, orders, selectedOrderId, token]);
+  }, [drivers, orders, selectedOrderId, token, user?.role]);
 
   useEffect(() => {
-    if (!token || !selectedOrderId || isLocalDemoToken(token)) return;
+    if (!token || user?.role === "DRIVER" || !selectedOrderId || isLocalDemoToken(token)) return;
 
     const authToken = token;
     let cancelled = false;
@@ -382,7 +449,7 @@ export default function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [selectedOrderId, token]);
+  }, [selectedOrderId, token, user?.role]);
 
   const filteredOrders = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -404,9 +471,15 @@ export default function Dashboard() {
   async function handleLogin(email: string, password: string) {
     setAuthError("");
     const isSeededDemoLogin = email.toLowerCase() === localDemoUser.email && password === "FleetTrack2026!";
+    const isSeededDriverLogin = email.toLowerCase() === localDriverDemoUser.email && password === "Driver2026!";
 
     if (isSeededDemoLogin && !(await apiReady())) {
       signInToLocalDemo();
+      return;
+    }
+
+    if (isSeededDriverLogin && !(await apiReady())) {
+      signInToLocalDriverDemo();
       return;
     }
 
@@ -425,6 +498,11 @@ export default function Dashboard() {
         return;
       }
 
+      if (isSeededDriverLogin) {
+        signInToLocalDriverDemo();
+        return;
+      }
+
       setAuthError("Invalid credentials or API unavailable.");
     }
   }
@@ -433,6 +511,12 @@ export default function Dashboard() {
     window.localStorage.setItem("fleettrack_token", localDemoToken);
     setToken(localDemoToken);
     setUser(localDemoUser);
+  }
+
+  function signInToLocalDriverDemo() {
+    window.localStorage.setItem("fleettrack_token", localDriverDemoToken);
+    setToken(localDriverDemoToken);
+    setUser(localDriverDemoUser);
   }
 
   function handleLogout() {
@@ -508,6 +592,85 @@ export default function Dashboard() {
       updateOrderStatusLocally(orderId, status);
       setLoadError("Live API unavailable. Status changes are being previewed locally.");
     }
+  }
+
+  async function acceptDriverAssignment(orderId: string) {
+    if (!token) return;
+
+    if (isLocalDriverDemoToken(token)) {
+      applyDriverWorkflowResult(acceptDriverAssignmentLocally(orderId));
+      return;
+    }
+
+    try {
+      const result = await apiRequest<DriverWorkflowResult>(`/api/driver/assignments/${orderId}/accept`, token, {
+        method: "POST"
+      });
+      applyDriverWorkflowResult(result);
+      setDriverNotice("");
+    } catch {
+      setDriverNotice("Unable to accept assignment from the live API.");
+    }
+  }
+
+  async function rejectDriverAssignment(orderId: string) {
+    if (!token) return;
+
+    if (isLocalDriverDemoToken(token)) {
+      applyDriverWorkflowResult(rejectDriverAssignmentLocally(orderId));
+      return;
+    }
+
+    try {
+      const result = await apiRequest<DriverWorkflowResult>(`/api/driver/assignments/${orderId}/reject`, token, {
+        method: "POST",
+        body: JSON.stringify({ reason: "Driver unavailable" })
+      });
+      applyDriverWorkflowResult(result);
+      setDriverNotice("");
+    } catch {
+      setDriverNotice("Unable to reject assignment from the live API.");
+    }
+  }
+
+  async function updateDriverOrderStatus(orderId: string, status: Extract<DeliveryStatus, "picked_up" | "in_transit" | "delayed" | "delivered">) {
+    if (!token) return;
+
+    if (isLocalDriverDemoToken(token)) {
+      applyDriverWorkflowResult(updateDriverOrderStatusLocally(orderId, status));
+      return;
+    }
+
+    try {
+      const result = await apiRequest<DriverWorkflowResult>(`/api/driver/orders/${orderId}/status`, token, {
+        method: "PATCH",
+        body: JSON.stringify({
+          status,
+          proof:
+            status === "delivered"
+              ? {
+                  recipientName: driverAssignments.find((assignment) => assignment.order.id === orderId)?.order.customer,
+                  notes: "Confirmed from driver workspace"
+                }
+              : undefined
+        })
+      });
+      applyDriverWorkflowResult(result);
+      setDriverNotice("");
+    } catch {
+      setDriverNotice("Unable to update delivery status from the live API.");
+    }
+  }
+
+  function applyDriverWorkflowResult(result: DriverWorkflowResult | null) {
+    if (!result) return;
+
+    setDriverAssignments((current) =>
+      current.map((assignment) => (assignment.id === result.assignment.id ? result.assignment : assignment))
+    );
+    setOrders((current) => current.map((order) => (order.id === result.order.id ? result.order : order)));
+    setDrivers((current) => current.map((driver) => (driver.id === result.driver.id ? result.driver : driver)));
+    setDriverProfile(result.driver);
   }
 
   async function createQuickOrder() {
@@ -648,6 +811,93 @@ export default function Dashboard() {
     );
   }
 
+  function acceptDriverAssignmentLocally(orderId: string): DriverWorkflowResult | null {
+    const assignment = driverAssignments.find((item) => item.order.id === orderId);
+    const driver = driverProfile ?? seedDrivers.find((item) => item.id === localDriverId);
+    if (!assignment || !driver) return null;
+
+    const order = {
+      ...assignment.order,
+      driverId: driver.id,
+      status: "assigned" as DeliveryStatus,
+      eta: assignment.order.eta === "Unassigned" ? "24 min" : assignment.order.eta
+    };
+    const nextDriver = {
+      ...driver,
+      status: "assigned" as DriverStatus,
+      activeOrderId: order.id,
+      routeProgress: Math.max(driver.routeProgress, 8)
+    };
+    const nextAssignment = {
+      ...assignment,
+      order,
+      driver: nextDriver,
+      status: "accepted" as DriverAssignment["status"],
+      acceptedAt: new Date().toISOString()
+    };
+
+    return { assignment: nextAssignment, order, driver: nextDriver };
+  }
+
+  function rejectDriverAssignmentLocally(orderId: string): DriverWorkflowResult | null {
+    const assignment = driverAssignments.find((item) => item.order.id === orderId);
+    const driver = driverProfile ?? seedDrivers.find((item) => item.id === localDriverId);
+    if (!assignment || !driver) return null;
+
+    const order = {
+      ...assignment.order,
+      driverId: undefined,
+      status: "placed" as DeliveryStatus,
+      eta: "Unassigned"
+    };
+    const nextDriver = {
+      ...driver,
+      status: "available" as DriverStatus,
+      activeOrderId: undefined,
+      routeProgress: 0
+    };
+    const nextAssignment = {
+      ...assignment,
+      order,
+      driver: nextDriver,
+      status: "rejected" as DriverAssignment["status"],
+      rejectedAt: new Date().toISOString(),
+      rejectionReason: "Driver unavailable"
+    };
+
+    return { assignment: nextAssignment, order, driver: nextDriver };
+  }
+
+  function updateDriverOrderStatusLocally(
+    orderId: string,
+    status: Extract<DeliveryStatus, "picked_up" | "in_transit" | "delayed" | "delivered">
+  ): DriverWorkflowResult | null {
+    const assignment = driverAssignments.find((item) => item.order.id === orderId);
+    const driver = driverProfile ?? seedDrivers.find((item) => item.id === localDriverId);
+    if (!assignment || !driver) return null;
+
+    const order = {
+      ...assignment.order,
+      status,
+      eta: status === "delivered" ? "Delivered" : assignment.order.eta === "Delivered" ? "12 min" : assignment.order.eta
+    };
+    const nextDriver = {
+      ...driver,
+      status: status === "delivered" ? ("available" as DriverStatus) : ("assigned" as DriverStatus),
+      activeOrderId: status === "delivered" ? undefined : order.id,
+      routeProgress: status === "delivered" ? 100 : Math.max(driver.routeProgress, statusProgress(status))
+    };
+    const nextAssignment = {
+      ...assignment,
+      order,
+      driver: nextDriver,
+      status: status === "delivered" ? ("completed" as DriverAssignment["status"]) : assignment.status,
+      completedAt: status === "delivered" ? new Date().toISOString() : assignment.completedAt
+    };
+
+    return { assignment: nextAssignment, order, driver: nextDriver };
+  }
+
   const navItems = [
     { label: "Dashboard", icon: LayoutDashboard },
     { label: "Orders", icon: Boxes },
@@ -662,6 +912,20 @@ export default function Dashboard() {
 
   if (!token || !user) {
     return <LoginScreen error={authError} onLogin={handleLogin} />;
+  }
+
+  if (user.role === "DRIVER") {
+    return (
+      <DriverWorkspace
+        assignments={driverAssignments}
+        driver={driverProfile}
+        notice={driverNotice}
+        onAccept={acceptDriverAssignment}
+        onReject={rejectDriverAssignment}
+        onStatus={updateDriverOrderStatus}
+        onLogout={handleLogout}
+      />
+    );
   }
 
   return (
@@ -957,6 +1221,108 @@ export default function Dashboard() {
   );
 }
 
+function DriverWorkspace({
+  assignments,
+  driver,
+  notice,
+  onAccept,
+  onReject,
+  onStatus,
+  onLogout
+}: {
+  assignments: DriverAssignment[];
+  driver: Driver | null;
+  notice: string;
+  onAccept: (orderId: string) => Promise<void>;
+  onReject: (orderId: string) => Promise<void>;
+  onStatus: (orderId: string, status: (typeof driverStatusFlow)[number]) => Promise<void>;
+  onLogout: () => void;
+}) {
+  const activeAssignments = assignments.filter((assignment) => assignment.status !== "completed" && assignment.status !== "cancelled");
+  const completedCount = assignments.filter((assignment) => assignment.status === "completed").length;
+  const activeOrder = activeAssignments.find((assignment) => assignment.status === "accepted")?.order;
+
+  return (
+    <main className="driver-shell">
+      <header className="driver-topbar">
+        <div className="brand-row driver-brand">
+          <div className="brand-icon">
+            <Truck size={19} />
+          </div>
+          <span>FleetTrack Driver</span>
+        </div>
+        <button className="icon-button" onClick={onLogout} aria-label="Sign out">
+          <LogOut size={18} />
+        </button>
+      </header>
+
+      <section className="driver-hero">
+        <div>
+          <p>{driver?.vehicle ?? "Driver workspace"}</p>
+          <h1>{driver?.name ?? "Driver"}</h1>
+        </div>
+        <DriverStatusBadge status={driver?.status ?? "offline"} />
+      </section>
+
+      <section className="driver-metrics">
+        <Metric title="Open Assignments" value={String(activeAssignments.length)} note="Ready for action" icon={<PackageCheck size={21} />} tone="blue" />
+        <Metric title="Active Order" value={activeOrder?.id ?? "None"} note={activeOrder?.eta ?? "No active ETA"} icon={<Navigation size={21} />} tone="green" />
+        <Metric title="Completed" value={String(completedCount)} note="This session" icon={<CheckCircle2 size={21} />} tone="mint" />
+      </section>
+
+      {notice ? <div className="inline-alert">{notice}</div> : null}
+
+      <section className="driver-assignment-list">
+        {assignments.map((assignment) => (
+          <article className="driver-assignment-card" key={assignment.id}>
+            <div className="driver-assignment-main">
+              <div>
+                <span className="assignment-kicker">{assignment.status}</span>
+                <h2>{assignment.order.id}</h2>
+                <p>{assignment.order.customer}</p>
+              </div>
+              <StatusBadge status={assignment.order.status} />
+            </div>
+
+            <div className="detail-stack">
+              <Detail label="Address" value={assignment.order.address} />
+              <Detail label="Priority" value={assignment.order.priority} />
+              <Detail label="ETA" value={assignment.order.eta} />
+            </div>
+
+            {assignment.status === "offered" ? (
+              <div className="driver-actions">
+                <button className="primary-button" onClick={() => onAccept(assignment.order.id)}>
+                  <CheckCircle2 size={17} />
+                  Accept
+                </button>
+                <button className="secondary-button" onClick={() => onReject(assignment.order.id)}>
+                  <X size={17} />
+                  Reject
+                </button>
+              </div>
+            ) : null}
+
+            {assignment.status === "accepted" ? (
+              <div className="driver-status-actions">
+                {driverStatusFlow.map((status) => (
+                  <button
+                    className={cx("status-button", assignment.order.status === status && "status-button-active")}
+                    key={status}
+                    onClick={() => onStatus(assignment.order.id, status)}
+                  >
+                    {statusLabels[status]}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </article>
+        ))}
+      </section>
+    </main>
+  );
+}
+
 function LoginScreen({ error, onLogin }: { error: string; onLogin: (email: string, password: string) => Promise<void> }) {
   const [email, setEmail] = useState("admin@fleettrack.local");
   const [password, setPassword] = useState("FleetTrack2026!");
@@ -994,6 +1360,27 @@ function LoginScreen({ error, onLogin }: { error: string; onLogin: (email: strin
         <button className="primary-button login-button" disabled={pending}>
           {pending ? "Signing in" : "Sign in"}
         </button>
+
+        <div className="login-shortcuts">
+          <button
+            type="button"
+            onClick={() => {
+              setEmail("admin@fleettrack.local");
+              setPassword("FleetTrack2026!");
+            }}
+          >
+            Dispatcher demo
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setEmail("drv-01@fleettrack.local");
+              setPassword("Driver2026!");
+            }}
+          >
+            Driver demo
+          </button>
+        </div>
       </form>
     </main>
   );
@@ -1088,6 +1475,39 @@ function initials(name: string) {
 
 function isLocalDemoToken(token: string | null | undefined) {
   return token === localDemoToken;
+}
+
+function isLocalDriverDemoToken(token: string | null | undefined) {
+  return token === localDriverDemoToken;
+}
+
+function createLocalDriverAssignments(): DriverAssignment[] {
+  const driver = seedDrivers.find((item) => item.id === localDriverId) ?? seedDrivers[0];
+  const assignedOrders = seedOrders.filter((order) => order.driverId === localDriverId);
+  const offeredOrder = seedOrders.find((order) => order.status === "placed" && !order.driverId);
+
+  return [
+    ...assignedOrders.map((order) => ({
+      id: `local-${order.id}-${localDriverId}`,
+      order,
+      driver,
+      status: order.status === "delivered" ? ("completed" as const) : ("accepted" as const),
+      assignedAt: new Date().toISOString(),
+      acceptedAt: new Date().toISOString(),
+      completedAt: order.status === "delivered" ? new Date().toISOString() : undefined
+    })),
+    ...(offeredOrder
+      ? [
+          {
+            id: `local-${offeredOrder.id}-${localDriverId}`,
+            order: offeredOrder,
+            driver,
+            status: "offered" as const,
+            assignedAt: new Date().toISOString()
+          }
+        ]
+      : [])
+  ];
 }
 
 function createLocalRoutePlan(order: Order, driver?: Driver): RoutePlan {

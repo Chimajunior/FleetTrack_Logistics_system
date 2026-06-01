@@ -984,6 +984,134 @@ small {
   margin: 0 18px 18px;
 }
 
+.login-shortcuts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.login-shortcuts button {
+  min-height: 34px;
+  color: #0c70c8;
+  background: #eaf4ff;
+  border: 0;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.driver-shell {
+  min-height: 100vh;
+  padding-bottom: 28px;
+  background: #edf4fa;
+}
+
+.driver-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 60px;
+  padding: 0 24px;
+  background: #071321;
+  color: #eef6ff;
+}
+
+.driver-brand {
+  height: auto;
+  padding: 0;
+  border: 0;
+}
+
+.driver-topbar .icon-button {
+  color: #eef6ff;
+}
+
+.driver-hero,
+.driver-metrics,
+.driver-assignment-list,
+.driver-shell > .inline-alert {
+  width: min(1120px, calc(100% - 48px));
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.driver-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 28px 0 18px;
+}
+
+.driver-hero p {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.driver-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.driver-shell > .inline-alert {
+  margin-bottom: 16px;
+}
+
+.driver-assignment-list {
+  display: grid;
+  gap: 14px;
+}
+
+.driver-assignment-card {
+  display: grid;
+  gap: 0;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.driver-assignment-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.driver-assignment-main p {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.assignment-kicker {
+  color: #596575;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.driver-actions,
+.driver-status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 20px 20px;
+}
+
+.driver-status-actions .status-button {
+  min-width: 120px;
+  padding: 0 12px;
+}
+
 @media (max-width: 1180px) {
   .metrics-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1030,8 +1158,26 @@ small {
   }
 
   .metrics-grid,
-  .ai-grid {
+  .ai-grid,
+  .driver-metrics,
+  .login-shortcuts {
     grid-template-columns: 1fr;
+  }
+
+  .driver-topbar {
+    padding: 0 14px;
+  }
+
+  .driver-hero,
+  .driver-metrics,
+  .driver-assignment-list,
+  .driver-shell > .inline-alert {
+    width: calc(100% - 28px);
+  }
+
+  .driver-hero {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .table-row {

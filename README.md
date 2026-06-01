@@ -37,6 +37,13 @@ Email: admin@fleettrack.local
 Password: FleetTrack2026!
 ```
 
+The login screen also supports a driver demo workspace:
+
+```text
+Email: drv-01@fleettrack.local
+Password: Driver2026!
+```
+
 ## Database Mode
 
 Start PostgreSQL/PostGIS and Redis:
@@ -82,6 +89,11 @@ postgresql://fleettrack:fleettrack@localhost:5432/fleettrack
 - `GET /api/notifications`
 - `POST /api/notifications`
 - `POST /api/routes/:orderId/optimize`
+- `GET /api/driver/me`
+- `GET /api/driver/assignments`
+- `POST /api/driver/assignments/:orderId/accept`
+- `POST /api/driver/assignments/:orderId/reject`
+- `PATCH /api/driver/orders/:orderId/status`
 
 ## Notes
 
