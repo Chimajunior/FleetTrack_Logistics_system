@@ -252,6 +252,7 @@ export default function Dashboard() {
   const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState("");
   const [loadError, setLoadError] = useState("");
+  const [assigningSuggestionId, setAssigningSuggestionId] = useState<string | null>(null);
   const [selectedOrderId, setSelectedOrderId] = useState(seedOrders[0]?.id);
   const [selectedDriverId, setSelectedDriverId] = useState(seedDrivers[0]?.id);
   const [query, setQuery] = useState("");
@@ -608,6 +609,17 @@ export default function Dashboard() {
     } catch {
       assignDriverLocally(orderId, driverId);
       setLoadError("Live API unavailable. Changes are being previewed locally.");
+    }
+  }
+
+  async function assignSuggestedDriver(suggestion: AssignmentSuggestion) {
+    if (!suggestion.suggestedDriverId || assigningSuggestionId) return;
+
+    setAssigningSuggestionId(suggestion.orderId);
+    try {
+      await assignDriver(suggestion.orderId, suggestion.suggestedDriverId);
+    } finally {
+      setAssigningSuggestionId(null);
     }
   }
 
@@ -1315,22 +1327,34 @@ export default function Dashboard() {
                 {assignmentSuggestions.length ? (
                   assignmentSuggestions.slice(0, 3).map((suggestion) => {
                     const driver = drivers.find((item) => item.id === suggestion.suggestedDriverId);
+                    const isAssigningSuggestion = assigningSuggestionId === suggestion.orderId;
                     return (
-                      <button
-                        className="suggestion-card"
-                        key={suggestion.orderId}
-                        onClick={() => {
-                          setSelectedOrderId(suggestion.orderId);
-                          if (suggestion.suggestedDriverId) setSelectedDriverId(suggestion.suggestedDriverId);
-                        }}
-                      >
-                        <span>
-                          <strong>{suggestion.orderId}</strong>
-                          <small>{driver?.name ?? "Awaiting driver"}</small>
-                        </span>
-                        <span className="suggestion-score">{suggestion.score}</span>
-                        <small>{suggestion.reason}</small>
-                      </button>
+                      <article className="suggestion-card" key={suggestion.orderId}>
+                        <button
+                          className="suggestion-select"
+                          type="button"
+                          onClick={() => {
+                            setSelectedOrderId(suggestion.orderId);
+                            if (suggestion.suggestedDriverId) setSelectedDriverId(suggestion.suggestedDriverId);
+                          }}
+                        >
+                          <span>
+                            <strong>{suggestion.orderId}</strong>
+                            <small>{driver?.name ?? "Awaiting driver"}</small>
+                          </span>
+                          <span className="suggestion-score">{suggestion.score}</span>
+                          <small>{suggestion.reason}</small>
+                        </button>
+                        <button
+                          className="suggestion-action"
+                          type="button"
+                          disabled={!suggestion.suggestedDriverId || isAssigningSuggestion}
+                          onClick={() => assignSuggestedDriver(suggestion)}
+                        >
+                          <Send size={15} />
+                          {isAssigningSuggestion ? "Assigning" : "Assign"}
+                        </button>
+                      </article>
                     );
                   })
                 ) : (

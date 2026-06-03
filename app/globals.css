@@ -929,11 +929,11 @@ small {
 
 .suggestion-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 42px;
-  gap: 6px 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  padding: 12px;
-  text-align: left;
+  padding: 10px;
   background: #fff;
   border: 1px solid #e1e8f0;
   border-radius: 8px;
@@ -944,23 +944,57 @@ small {
   background: #f8fbff;
 }
 
-.suggestion-card span:first-child {
+.suggestion-select {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 6px 12px;
+  min-width: 0;
+  padding: 2px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+}
+
+.suggestion-select span:first-child {
   display: grid;
   gap: 2px;
   min-width: 0;
 }
 
-.suggestion-card strong,
-.suggestion-card small {
+.suggestion-select strong,
+.suggestion-select small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.suggestion-card small {
+.suggestion-select > small {
   grid-column: 1 / -1;
   color: var(--muted);
   font-size: 12px;
+}
+
+.suggestion-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 90px;
+  height: 36px;
+  padding: 0 10px;
+  color: #fff;
+  background: var(--green);
+  border: 0;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.suggestion-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .suggestion-score {
