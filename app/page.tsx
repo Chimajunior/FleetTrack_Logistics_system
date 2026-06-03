@@ -29,7 +29,18 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { demandForecast as seedForecast, drivers as seedDrivers, notifications as seedNotifications, orders as seedOrders } from "@/lib/mock-data";
-import type { DeliveryStatus, Driver, DriverAssignment, DriverStatus, ForecastPoint, NotificationItem, Order, Priority, RoutePlan } from "@/lib/types";
+import type {
+  AssignmentSuggestion,
+  DeliveryStatus,
+  Driver,
+  DriverAssignment,
+  DriverStatus,
+  ForecastPoint,
+  NotificationItem,
+  Order,
+  Priority,
+  RoutePlan
+} from "@/lib/types";
 
 const statusLabels: Record<DeliveryStatus, string> = {
   placed: "Placed",
@@ -232,6 +243,9 @@ export default function Dashboard() {
   const [drivers, setDrivers] = useState<Driver[]>(seedDrivers);
   const [notifications, setNotifications] = useState<NotificationItem[]>(seedNotifications);
   const [forecast, setForecast] = useState<ForecastPoint[]>(seedForecast);
+  const [assignmentSuggestions, setAssignmentSuggestions] = useState<AssignmentSuggestion[]>(
+    createLocalAssignmentSuggestions(seedOrders, seedDrivers)
+  );
   const [routePlan, setRoutePlan] = useState<RoutePlan | undefined>();
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -300,16 +314,18 @@ export default function Dashboard() {
         setDrivers(seedDrivers);
         setNotifications(seedNotifications);
         setForecast(seedForecast);
+        setAssignmentSuggestions(createLocalAssignmentSuggestions(seedOrders, seedDrivers));
         setLoadError("");
         return;
       }
 
       try {
-        const [nextOrders, nextDrivers, nextNotifications, nextForecast] = await Promise.all([
+        const [nextOrders, nextDrivers, nextNotifications, nextForecast, nextSuggestions] = await Promise.all([
           apiRequest<Order[]>("/api/orders", authToken),
           apiRequest<Driver[]>("/api/drivers", authToken),
           apiRequest<NotificationItem[]>("/api/notifications", authToken),
-          apiRequest<ForecastPoint[]>("/api/demand-forecast", authToken)
+          apiRequest<ForecastPoint[]>("/api/demand-forecast", authToken),
+          apiRequest<AssignmentSuggestion[]>("/api/ai/assignments", authToken)
         ]);
 
         if (cancelled) return;
@@ -318,6 +334,7 @@ export default function Dashboard() {
         setDrivers(nextDrivers);
         setNotifications(nextNotifications);
         setForecast(nextForecast);
+        setAssignmentSuggestions(nextSuggestions);
         setSelectedOrderId((current) => current ?? nextOrders[0]?.id);
         setSelectedDriverId((current) => current ?? nextDrivers[0]?.id);
         setLoadError("");
@@ -584,6 +601,7 @@ export default function Dashboard() {
 
       setOrders((current) => current.map((order) => (order.id === orderId ? result.order : order)));
       setDrivers((current) => current.map((driver) => (driver.id === driverId ? result.driver : driver)));
+      setAssignmentSuggestions((current) => current.filter((suggestion) => suggestion.orderId !== orderId));
       setRoutePlan(result.routePlan);
       setSelectedOrderId(orderId);
       setSelectedDriverId(driverId);
@@ -896,6 +914,7 @@ export default function Dashboard() {
 
     setOrders((current) => current.map((item) => (item.id === orderId ? updatedOrder : item)));
     setDrivers((current) => current.map((item) => (item.id === driverId ? updatedDriver : item)));
+    setAssignmentSuggestions((current) => current.filter((suggestion) => suggestion.orderId !== orderId));
     setRoutePlan(createLocalRoutePlan(updatedOrder, updatedDriver));
     setSelectedOrderId(orderId);
     setSelectedDriverId(driverId);
@@ -1291,6 +1310,32 @@ export default function Dashboard() {
                 <AiTile icon={<Route size={18} />} title="Route optimization" value="14.2 mi saved" />
                 <AiTile icon={<Clock3 size={18} />} title="ETA confidence" value="91%" />
                 <AiTile icon={<Gauge size={18} />} title="SLA risk" value="2 orders" />
+              </div>
+              <div className="suggestion-list">
+                {assignmentSuggestions.length ? (
+                  assignmentSuggestions.slice(0, 3).map((suggestion) => {
+                    const driver = drivers.find((item) => item.id === suggestion.suggestedDriverId);
+                    return (
+                      <button
+                        className="suggestion-card"
+                        key={suggestion.orderId}
+                        onClick={() => {
+                          setSelectedOrderId(suggestion.orderId);
+                          if (suggestion.suggestedDriverId) setSelectedDriverId(suggestion.suggestedDriverId);
+                        }}
+                      >
+                        <span>
+                          <strong>{suggestion.orderId}</strong>
+                          <small>{driver?.name ?? "Awaiting driver"}</small>
+                        </span>
+                        <span className="suggestion-score">{suggestion.score}</span>
+                        <small>{suggestion.reason}</small>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="suggestion-empty">No open orders need assignment</div>
+                )}
               </div>
               <div className="forecast-chart">
                 {forecast.map((item) => (
@@ -1783,6 +1828,35 @@ function isLocalDemoToken(token: string | null | undefined) {
 
 function isLocalDriverDemoToken(token: string | null | undefined) {
   return token === localDriverDemoToken;
+}
+
+function createLocalAssignmentSuggestions(orders: Order[], drivers: Driver[]): AssignmentSuggestion[] {
+  const availableDrivers = drivers.filter((driver) => driver.status === "available");
+
+  return orders
+    .filter((order) => !order.driverId && order.status === "placed")
+    .map((order) => {
+      const rankedDrivers = availableDrivers
+        .map((driver) => ({
+          driver,
+          distanceMeters: distanceBetween(driver.location, order.destination)
+        }))
+        .sort((a, b) => a.distanceMeters - b.distanceMeters);
+
+      const nearest = rankedDrivers[0];
+      const scoreBase = order.priority === "critical" ? 98 : order.priority === "express" ? 94 : 90;
+      const score = nearest ? Math.max(72, Math.min(98, Math.round(scoreBase - Math.min(18, nearest.distanceMeters / 750)))) : 72;
+
+      return {
+        orderId: order.id,
+        suggestedDriverId: nearest?.driver.id ?? null,
+        score,
+        distanceMeters: nearest ? Math.round(nearest.distanceMeters) : undefined,
+        reason: nearest
+          ? `${order.priority} order matched to ${nearest.driver.name} ${(nearest.distanceMeters / 1609.34).toFixed(1)} mi from destination`
+          : `${order.priority} order is waiting for an available driver`
+      };
+    });
 }
 
 function createLocalDriverAssignments(): DriverAssignment[] {

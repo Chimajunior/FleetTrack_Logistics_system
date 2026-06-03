@@ -921,6 +921,67 @@ small {
   font-size: 20px;
 }
 
+.suggestion-list {
+  display: grid;
+  gap: 10px;
+  padding: 14px 20px 0;
+}
+
+.suggestion-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  gap: 6px 12px;
+  width: 100%;
+  padding: 12px;
+  text-align: left;
+  background: #fff;
+  border: 1px solid #e1e8f0;
+  border-radius: 8px;
+}
+
+.suggestion-card:hover {
+  border-color: #b9c8d9;
+  background: #f8fbff;
+}
+
+.suggestion-card span:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.suggestion-card strong,
+.suggestion-card small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggestion-card small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.suggestion-score {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 34px;
+  color: #066446;
+  font-weight: 800;
+  background: #dcf8ed;
+  border-radius: 8px;
+}
+
+.suggestion-empty {
+  padding: 14px;
+  color: var(--muted);
+  background: #f6f9fc;
+  border: 1px dashed #d8e2ec;
+  border-radius: 8px;
+}
+
 .forecast-chart {
   display: grid;
   grid-template-columns: repeat(6, 1fr);

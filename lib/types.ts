@@ -55,6 +55,14 @@ export type ForecastPoint = {
   orders: number;
 };
 
+export type AssignmentSuggestion = {
+  orderId: string;
+  suggestedDriverId: string | null;
+  score: number;
+  reason: string;
+  distanceMeters?: number;
+};
+
 export type DriverAssignment = {
   id: string;
   order: Order;

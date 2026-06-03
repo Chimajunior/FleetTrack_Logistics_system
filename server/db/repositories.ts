@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Client } from "pg";
 import { prisma } from "./prisma";
 import type {
+  AssignmentSuggestion,
   DeliveryProofInput,
   DeliveryStatus,
   Driver,
@@ -111,6 +112,15 @@ type RoutePlanRecord = {
   etaMinutes: number | null;
   provider: string;
   createdAt: Date;
+};
+
+type AssignmentSuggestionRecord = {
+  orderId: string;
+  suggestedDriverId: string | null;
+  driverName: string | null;
+  priority: string;
+  distanceMeters: number | null;
+  score: number;
 };
 
 type AssignmentRecord = {
@@ -245,6 +255,68 @@ export async function listDemandForecast(): Promise<ForecastPoint[]> {
   return records.map((record: DemandForecastRecord) => ({
     label: record.window,
     orders: record.orders
+  }));
+}
+
+export async function listAssignmentSuggestions(): Promise<AssignmentSuggestion[]> {
+  const records = await prisma.$queryRaw<AssignmentSuggestionRecord[]>`
+    WITH ranked_candidates AS (
+      SELECT
+        o.id AS "orderId",
+        d.id AS "suggestedDriverId",
+        d.name AS "driverName",
+        o.priority::text AS priority,
+        ROUND(ST_Distance(d.latest_point, o.destination_point))::int AS "distanceMeters",
+        ROW_NUMBER() OVER (
+          PARTITION BY o.id
+          ORDER BY ST_Distance(d.latest_point, o.destination_point), d.rating DESC, d.name ASC
+        ) AS candidate_rank
+      FROM orders o
+      JOIN drivers d ON d.status = 'available'
+      WHERE o.driver_id IS NULL
+        AND o.status = 'placed'
+        AND o.destination_point IS NOT NULL
+        AND d.latest_point IS NOT NULL
+    )
+    SELECT
+      "orderId",
+      "suggestedDriverId",
+      "driverName",
+      priority,
+      "distanceMeters",
+      GREATEST(
+        72,
+        LEAST(
+          98,
+          ROUND(
+            CASE priority
+              WHEN 'critical' THEN 98
+              WHEN 'express' THEN 94
+              ELSE 90
+            END - LEAST(18, "distanceMeters" / 750.0)
+          )::int
+        )
+      ) AS score
+    FROM ranked_candidates
+    WHERE candidate_rank = 1
+    ORDER BY
+      CASE priority
+        WHEN 'critical' THEN 1
+        WHEN 'express' THEN 2
+        ELSE 3
+      END,
+      "distanceMeters",
+      "orderId"
+  `;
+
+  return records.map((record) => ({
+    orderId: record.orderId,
+    suggestedDriverId: record.suggestedDriverId,
+    score: record.score,
+    distanceMeters: record.distanceMeters ?? undefined,
+    reason: record.suggestedDriverId
+      ? `${record.priority} order matched to ${record.driverName} ${formatMiles(record.distanceMeters)} from destination`
+      : `${record.priority} order is waiting for an available driver`
   }));
 }
 
@@ -813,6 +885,11 @@ function nextProgress(status: DeliveryStatus, current: number) {
 function relativeMinutes(date: Date) {
   const minutes = Math.max(1, Math.round((Date.now() - date.getTime()) / 60000));
   return `${minutes} min`;
+}
+
+function formatMiles(distanceMeters: number | null) {
+  if (distanceMeters == null) return "nearby";
+  return `${(distanceMeters / 1609.34).toFixed(1)} mi`;
 }
 
 async function nextOrderId() {

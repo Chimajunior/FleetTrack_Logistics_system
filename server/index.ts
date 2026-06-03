@@ -14,6 +14,7 @@ import {
   findUserForLogin,
   getOrderRoute,
   getDriverForUser,
+  listAssignmentSuggestions,
   listDemandForecast,
   listDriverAssignments,
   listDrivers,
@@ -27,7 +28,7 @@ import {
   updateStatus
 } from "./db/repositories";
 import { enqueueDispatch } from "./queues/deliveryQueue";
-import { forecastDemand, optimizeAssignments, predictEta } from "./services/ai";
+import { forecastDemand, predictEta } from "./services/ai";
 import { planDeliveryRoute } from "./services/routing";
 import type { DeliveryProofInput, DeliveryStatus } from "../lib/types";
 
@@ -337,8 +338,7 @@ app.patch("/api/orders/:orderId/status", async (request, response, next) => {
 
 app.get("/api/ai/assignments", async (_request, response, next) => {
   try {
-    const [orders, drivers] = await Promise.all([listOrders(), listDrivers()]);
-    response.json(optimizeAssignments(orders, drivers));
+    response.json(await listAssignmentSuggestions());
   } catch (error) {
     next(error);
   }
