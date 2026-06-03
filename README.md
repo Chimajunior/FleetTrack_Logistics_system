@@ -89,6 +89,7 @@ The seeded database includes spatial driver and order points. PostGIS must be in
 - `npm run dev:all`: UI and API together
 - `npm run lint`: ESLint
 - `npm run typecheck`: Next route types and TypeScript
+- `npm run test:e2e`: reseed the local database and run the live Chromium smoke test
 - `npm run build`: production build
 - `npm run db:generate`: Prisma client generation
 - `npm run db:migrate`: Prisma migrations
@@ -117,3 +118,9 @@ The seeded database includes spatial driver and order points. PostGIS must be in
 Prisma 7 requires Node `^20.19 || ^22.12 || >=24.0`. This project pins `22.12.0` in `.nvmrc`.
 
 Google Maps is optional. Without `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`, the dashboard renders a local visual tracking map.
+
+The first e2e run may need the Playwright browser runtime:
+
+```bash
+npx playwright install chromium
+```

@@ -82,6 +82,20 @@ async function main() {
     driverUsers.set(driver.id, user.id);
   }
 
+  await prisma.$executeRaw`
+    TRUNCATE TABLE
+      delivery_proofs,
+      route_plans,
+      delivery_status_events,
+      delivery_assignments,
+      notifications,
+      demand_forecasts,
+      driver_locations,
+      drivers,
+      orders
+    RESTART IDENTITY CASCADE
+  `;
+
   for (const order of orders) {
     await prisma.order.upsert({
       where: { id: order.id },

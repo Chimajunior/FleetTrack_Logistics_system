@@ -16,7 +16,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "next typegen && tsc --noEmit"
+    "typecheck": "next typegen && tsc --noEmit",
+    "test:e2e": "npm run db:seed && playwright test tests/e2e --browser=chromium --reporter=line"
   },
   "dependencies": {
     "@googlemaps/js-api-loader": "^1.16.8",
@@ -36,6 +37,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/google.maps": "^3.58.1",

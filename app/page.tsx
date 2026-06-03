@@ -1347,7 +1347,7 @@ export default function Dashboard() {
                     const driver = drivers.find((item) => item.id === suggestion.suggestedDriverId);
                     const isAssigningSuggestion = assigningSuggestionId === suggestion.orderId;
                     return (
-                      <article className="suggestion-card" key={suggestion.orderId}>
+                      <article className="suggestion-card" data-testid={`assignment-suggestion-${suggestion.orderId}`} key={suggestion.orderId}>
                         <button
                           className="suggestion-select"
                           type="button"
@@ -1365,6 +1365,7 @@ export default function Dashboard() {
                         </button>
                         <button
                           className="suggestion-action"
+                          data-testid={`assign-suggestion-${suggestion.orderId}`}
                           type="button"
                           disabled={!suggestion.suggestedDriverId || isAssigningSuggestion}
                           onClick={() => assignSuggestedDriver(suggestion)}
