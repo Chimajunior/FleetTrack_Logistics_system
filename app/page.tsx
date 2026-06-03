@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { demandForecast as seedForecast, drivers as seedDrivers, notifications as seedNotifications, orders as seedOrders } from "@/lib/mock-data";
-import type { DeliveryStatus, Driver, DriverAssignment, DriverStatus, ForecastPoint, NotificationItem, Order, RoutePlan } from "@/lib/types";
+import type { DeliveryStatus, Driver, DriverAssignment, DriverStatus, ForecastPoint, NotificationItem, Order, Priority, RoutePlan } from "@/lib/types";
 
 const statusLabels: Record<DeliveryStatus, string> = {
   placed: "Placed",
@@ -75,6 +75,40 @@ type DriverWorkflowResult = {
   assignment: DriverAssignment;
   order: Order;
   driver: Driver;
+};
+
+type OrderFormState = {
+  customer: string;
+  phone: string;
+  address: string;
+  items: string;
+  weightKg: string;
+  priority: Priority;
+  destinationLat: string;
+  destinationLng: string;
+};
+
+type CustomerUpdateFormState = {
+  title: string;
+  body: string;
+  tone: NotificationItem["tone"];
+};
+
+const emptyOrderForm: OrderFormState = {
+  customer: "",
+  phone: "",
+  address: "",
+  items: "1",
+  weightKg: "1",
+  priority: "standard",
+  destinationLat: "40.724",
+  destinationLng: "-73.991"
+};
+
+const emptyCustomerUpdateForm: CustomerUpdateFormState = {
+  title: "Customer update sent",
+  body: "",
+  tone: "success"
 };
 
 function cx(...classes: Array<string | false | undefined>) {
@@ -213,6 +247,14 @@ export default function Dashboard() {
   const [driverProfile, setDriverProfile] = useState<Driver | null>(null);
   const [driverAssignments, setDriverAssignments] = useState<DriverAssignment[]>([]);
   const [driverNotice, setDriverNotice] = useState("");
+  const [orderDialogOpen, setOrderDialogOpen] = useState(false);
+  const [orderForm, setOrderForm] = useState<OrderFormState>(emptyOrderForm);
+  const [orderFormError, setOrderFormError] = useState("");
+  const [orderFormPending, setOrderFormPending] = useState(false);
+  const [customerUpdateDialogOpen, setCustomerUpdateDialogOpen] = useState(false);
+  const [customerUpdateForm, setCustomerUpdateForm] = useState<CustomerUpdateFormState>(emptyCustomerUpdateForm);
+  const [customerUpdateError, setCustomerUpdateError] = useState("");
+  const [customerUpdatePending, setCustomerUpdatePending] = useState(false);
 
   useEffect(() => {
     const savedToken = window.localStorage.getItem("fleettrack_token");
@@ -673,28 +715,69 @@ export default function Dashboard() {
     setDriverProfile(result.driver);
   }
 
-  async function createQuickOrder() {
+  function openOrderDialog() {
+    setOrderForm({
+      ...emptyOrderForm,
+      destinationLat: String(Number((40.72 + orders.length * 0.002).toFixed(6))),
+      destinationLng: String(Number((-73.99 - orders.length * 0.002).toFixed(6)))
+    });
+    setOrderFormError("");
+    setOrderDialogOpen(true);
+  }
+
+  async function submitOrderForm() {
+    setOrderFormError("");
+
+    const items = Number(orderForm.items);
+    const weightKg = Number(orderForm.weightKg);
+    const destinationLat = Number(orderForm.destinationLat);
+    const destinationLng = Number(orderForm.destinationLng);
+
+    if (!orderForm.customer.trim() || !orderForm.phone.trim() || !orderForm.address.trim()) {
+      setOrderFormError("Customer, phone, and address are required.");
+      return;
+    }
+
+    if (!Number.isFinite(items) || items < 1 || !Number.isInteger(items)) {
+      setOrderFormError("Items must be a whole number greater than zero.");
+      return;
+    }
+
+    if (!Number.isFinite(weightKg) || weightKg <= 0) {
+      setOrderFormError("Weight must be greater than zero.");
+      return;
+    }
+
+    if (!Number.isFinite(destinationLat) || !Number.isFinite(destinationLng)) {
+      setOrderFormError("Destination coordinates must be valid numbers.");
+      return;
+    }
+
     const sequence = String(orders.length + 1).padStart(3, "0");
     const id = `ORD-2026-${sequence}`;
     const order: Order = {
       id,
-      customer: "New Customer",
-      phone: "+1 (555) 010-2026",
-      address: "125 Dispatch Avenue, Loading Bay 2",
-      items: 2,
-      weightKg: 1.8,
+      customer: orderForm.customer.trim(),
+      phone: orderForm.phone.trim(),
+      address: orderForm.address.trim(),
+      items,
+      weightKg,
       status: "placed",
-      priority: "standard",
+      priority: orderForm.priority,
       placedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
       eta: "Unassigned",
       destination: {
-        lat: 40.72 + orders.length * 0.002,
-        lng: -73.99 - orders.length * 0.002
+        lat: destinationLat,
+        lng: destinationLng
       }
     };
 
+    setOrderFormPending(true);
+
     if (!token || isLocalDemoToken(token)) {
       addOrderLocally(order);
+      setOrderFormPending(false);
+      setOrderDialogOpen(false);
       return;
     }
 
@@ -714,25 +797,51 @@ export default function Dashboard() {
       });
       addOrderLocally(created);
       setLoadError("");
+      setOrderDialogOpen(false);
     } catch {
       addOrderLocally(order);
       setLoadError("Order creation is staged locally until the live create-order API is connected.");
+      setOrderDialogOpen(false);
+    } finally {
+      setOrderFormPending(false);
     }
   }
 
-  async function sendCustomerUpdate() {
+  function openCustomerUpdateDialog() {
     if (!selectedOrder) return;
+
+    setCustomerUpdateForm({
+      title: "Customer update sent",
+      body: `${selectedOrder.customer}, your delivery ${selectedOrder.id} is currently ${statusLabels[selectedOrder.status].toLowerCase()}.`,
+      tone: selectedOrder.status === "delayed" ? "warning" : "success"
+    });
+    setCustomerUpdateError("");
+    setCustomerUpdateDialogOpen(true);
+  }
+
+  async function submitCustomerUpdate() {
+    if (!selectedOrder) return;
+    setCustomerUpdateError("");
+
+    if (!customerUpdateForm.title.trim() || !customerUpdateForm.body.trim()) {
+      setCustomerUpdateError("Title and message are required.");
+      return;
+    }
 
     const notification: NotificationItem = {
       id: `LOCAL-NOT-${Date.now()}`,
-      title: "Customer update sent",
-      body: `${selectedOrder.customer} was notified about ${selectedOrder.id}.`,
+      title: customerUpdateForm.title.trim(),
+      body: customerUpdateForm.body.trim(),
       time: "now",
-      tone: "success"
+      tone: customerUpdateForm.tone
     };
+
+    setCustomerUpdatePending(true);
 
     if (!token || isLocalDemoToken(token)) {
       addNotificationLocally(notification);
+      setCustomerUpdatePending(false);
+      setCustomerUpdateDialogOpen(false);
       return;
     }
 
@@ -747,9 +856,13 @@ export default function Dashboard() {
       });
       addNotificationLocally(created);
       setLoadError("");
+      setCustomerUpdateDialogOpen(false);
     } catch {
       addNotificationLocally(notification);
       setLoadError("Live API unavailable. Customer notification is being previewed locally.");
+      setCustomerUpdateDialogOpen(false);
+    } finally {
+      setCustomerUpdatePending(false);
     }
   }
 
@@ -1002,7 +1115,7 @@ export default function Dashboard() {
               <h1>{section}</h1>
               <p>Orders, drivers, routes, and delivery risk in one live operations panel.</p>
             </div>
-            <button className="primary-button" onClick={createQuickOrder}>
+            <button className="primary-button" onClick={openOrderDialog}>
               <PackagePlus size={18} />
               New order
             </button>
@@ -1209,7 +1322,7 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
-              <button className="wide-button" onClick={sendCustomerUpdate}>
+              <button className="wide-button" onClick={openCustomerUpdateDialog}>
                 <Send size={16} />
                 Send customer update
               </button>
@@ -1217,7 +1330,198 @@ export default function Dashboard() {
           </section>
         </div>
       </section>
+      {orderDialogOpen ? (
+        <OrderDialog
+          error={orderFormError}
+          form={orderForm}
+          pending={orderFormPending}
+          onChange={setOrderForm}
+          onClose={() => {
+            if (!orderFormPending) setOrderDialogOpen(false);
+          }}
+          onSubmit={submitOrderForm}
+        />
+      ) : null}
+      {customerUpdateDialogOpen ? (
+        <CustomerUpdateDialog
+          error={customerUpdateError}
+          form={customerUpdateForm}
+          pending={customerUpdatePending}
+          selectedOrder={selectedOrder}
+          onChange={setCustomerUpdateForm}
+          onClose={() => {
+            if (!customerUpdatePending) setCustomerUpdateDialogOpen(false);
+          }}
+          onSubmit={submitCustomerUpdate}
+        />
+      ) : null}
     </main>
+  );
+}
+
+function OrderDialog({
+  error,
+  form,
+  pending,
+  onChange,
+  onClose,
+  onSubmit
+}: {
+  error: string;
+  form: OrderFormState;
+  pending: boolean;
+  onChange: (form: OrderFormState) => void;
+  onClose: () => void;
+  onSubmit: () => Promise<void>;
+}) {
+  function update<K extends keyof OrderFormState>(key: K, value: OrderFormState[K]) {
+    onChange({ ...form, [key]: value });
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <form
+        className="order-dialog"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          await onSubmit();
+        }}
+      >
+        <div className="modal-header">
+          <div>
+            <h2>New order</h2>
+            <p>Create a dispatch-ready delivery.</p>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="Close new order form">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="order-form-grid">
+          <label className="form-field wide">
+            Customer
+            <input value={form.customer} onChange={(event) => update("customer", event.target.value)} placeholder="Customer name" />
+          </label>
+          <label className="form-field">
+            Phone
+            <input value={form.phone} onChange={(event) => update("phone", event.target.value)} placeholder="+1 (555) 010-2026" />
+          </label>
+          <label className="form-field">
+            Priority
+            <select value={form.priority} onChange={(event) => update("priority", event.target.value as Priority)}>
+              <option value="standard">Standard</option>
+              <option value="express">Express</option>
+              <option value="critical">Critical</option>
+            </select>
+          </label>
+          <label className="form-field wide">
+            Address
+            <input value={form.address} onChange={(event) => update("address", event.target.value)} placeholder="Delivery address" />
+          </label>
+          <label className="form-field">
+            Items
+            <input min="1" step="1" type="number" value={form.items} onChange={(event) => update("items", event.target.value)} />
+          </label>
+          <label className="form-field">
+            Weight kg
+            <input min="0.1" step="0.1" type="number" value={form.weightKg} onChange={(event) => update("weightKg", event.target.value)} />
+          </label>
+          <label className="form-field">
+            Latitude
+            <input value={form.destinationLat} onChange={(event) => update("destinationLat", event.target.value)} />
+          </label>
+          <label className="form-field">
+            Longitude
+            <input value={form.destinationLng} onChange={(event) => update("destinationLng", event.target.value)} />
+          </label>
+        </div>
+
+        {error ? <div className="login-error">{error}</div> : null}
+
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onClose} disabled={pending}>
+            Cancel
+          </button>
+          <button className="primary-button" disabled={pending}>
+            {pending ? "Creating" : "Create order"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function CustomerUpdateDialog({
+  error,
+  form,
+  pending,
+  selectedOrder,
+  onChange,
+  onClose,
+  onSubmit
+}: {
+  error: string;
+  form: CustomerUpdateFormState;
+  pending: boolean;
+  selectedOrder?: Order;
+  onChange: (form: CustomerUpdateFormState) => void;
+  onClose: () => void;
+  onSubmit: () => Promise<void>;
+}) {
+  function update<K extends keyof CustomerUpdateFormState>(key: K, value: CustomerUpdateFormState[K]) {
+    onChange({ ...form, [key]: value });
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <form
+        className="order-dialog customer-update-dialog"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          await onSubmit();
+        }}
+      >
+        <div className="modal-header">
+          <div>
+            <h2>Customer update</h2>
+            <p>{selectedOrder ? `${selectedOrder.id} · ${selectedOrder.customer}` : "Send an operational notification."}</p>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="Close customer update form">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="order-form-grid">
+          <label className="form-field wide">
+            Title
+            <input value={form.title} onChange={(event) => update("title", event.target.value)} placeholder="Update title" />
+          </label>
+          <label className="form-field wide">
+            Message
+            <textarea value={form.body} onChange={(event) => update("body", event.target.value)} placeholder="Customer-facing message" />
+          </label>
+          <label className="form-field">
+            Tone
+            <select value={form.tone} onChange={(event) => update("tone", event.target.value as NotificationItem["tone"])}>
+              <option value="info">Info</option>
+              <option value="success">Success</option>
+              <option value="warning">Warning</option>
+            </select>
+          </label>
+        </div>
+
+        {error ? <div className="login-error">{error}</div> : null}
+
+        <div className="modal-actions">
+          <button className="secondary-button" type="button" onClick={onClose} disabled={pending}>
+            Cancel
+          </button>
+          <button className="primary-button" disabled={pending}>
+            {pending ? "Sending" : "Send update"}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 
