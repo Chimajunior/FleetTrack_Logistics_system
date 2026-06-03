@@ -670,7 +670,7 @@ export async function tickDriverLocations(): Promise<Driver[]> {
         }
       });
 
-      await prisma.driverLocation.create({
+      const location = await prisma.driverLocation.create({
         data: {
           driverId: driver.id,
           lat: nextLat,
@@ -683,6 +683,12 @@ export async function tickDriverLocations(): Promise<Driver[]> {
         UPDATE drivers
         SET latest_point = ST_SetSRID(ST_MakePoint(${nextLng}, ${nextLat}), 4326)::geography
         WHERE id = ${driver.id}
+      `;
+
+      await prisma.$executeRaw`
+        UPDATE driver_locations
+        SET point = ST_SetSRID(ST_MakePoint(${nextLng}, ${nextLat}), 4326)::geography
+        WHERE id = ${location.id}
       `;
 
       return updated;

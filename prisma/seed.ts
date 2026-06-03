@@ -158,7 +158,45 @@ async function main() {
       SET latest_point = ST_SetSRID(ST_MakePoint(${driver.location.lng}, ${driver.location.lat}), 4326)::geography
       WHERE id = ${driver.id}
     `;
+
+    const locationId = `${driver.id}-seed-location`;
+
+    await prisma.driverLocation.upsert({
+      where: { id: locationId },
+      update: {
+        lat: driver.location.lat,
+        lng: driver.location.lng,
+        heading: driver.routeProgress ? 62 : null,
+        speedKph: driver.status === "assigned" ? 34 : 0
+      },
+      create: {
+        id: locationId,
+        driverId: driver.id,
+        lat: driver.location.lat,
+        lng: driver.location.lng,
+        heading: driver.routeProgress ? 62 : null,
+        speedKph: driver.status === "assigned" ? 34 : 0
+      }
+    });
+
+    await prisma.$executeRaw`
+      UPDATE driver_locations
+      SET point = ST_SetSRID(ST_MakePoint(${driver.location.lng}, ${driver.location.lat}), 4326)::geography
+      WHERE id = ${locationId}
+    `;
   }
+
+  await prisma.$executeRaw`
+    UPDATE driver_locations
+    SET point = ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography
+    WHERE point IS NULL
+  `;
+
+  await prisma.deliveryStatusEvent.deleteMany({
+    where: {
+      note: "Seeded operational status"
+    }
+  });
 
   for (const order of orders) {
     if (!order.driverId) continue;
@@ -185,8 +223,14 @@ async function main() {
       }
     });
 
-    await prisma.deliveryStatusEvent.create({
-      data: {
+    await prisma.deliveryStatusEvent.upsert({
+      where: { id: `${order.id}-seed-status` },
+      update: {
+        status: statusMap[order.status],
+        note: "Seeded operational status"
+      },
+      create: {
+        id: `${order.id}-seed-status`,
         orderId: order.id,
         status: statusMap[order.status],
         note: "Seeded operational status"
@@ -211,9 +255,19 @@ async function main() {
     });
   }
 
+  await prisma.demandForecast.deleteMany();
+
   for (const point of demandForecast) {
-    await prisma.demandForecast.create({
-      data: {
+    await prisma.demandForecast.upsert({
+      where: { id: `seed-demand-${slugify(point.label)}` },
+      update: {
+        window: point.label,
+        orders: point.orders,
+        predicted: Math.round(point.orders * 1.08),
+        confidence: 0.86
+      },
+      create: {
+        id: `seed-demand-${slugify(point.label)}`,
         window: point.label,
         orders: point.orders,
         predicted: Math.round(point.orders * 1.08),
@@ -233,6 +287,10 @@ function seededTime(value: string) {
 function parseEta(value: string) {
   const match = value.match(/\d+/);
   return match ? Number(match[0]) : null;
+}
+
+function slugify(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
 main()
