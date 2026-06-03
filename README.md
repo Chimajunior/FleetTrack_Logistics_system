@@ -23,6 +23,12 @@ Open:
 http://localhost:3000
 ```
 
+If another app already owns port `3000`, Next.js will choose the next open port. In the current local workspace FleetTrack is live at:
+
+```text
+http://localhost:3001
+```
+
 API checks:
 
 ```text
@@ -46,11 +52,19 @@ Password: Driver2026!
 
 ## Database Mode
 
-Start PostgreSQL/PostGIS and Redis:
+Copy the environment template first:
+
+```bash
+cp .env.example .env
+```
+
+Start PostgreSQL/PostGIS and Redis with Docker:
 
 ```bash
 docker compose up -d
 ```
+
+Native services work too. The runtime expects PostgreSQL/PostGIS on `localhost:5432` and Redis on `127.0.0.1:6379` unless `.env` overrides `DATABASE_URL` or `REDIS_URL`.
 
 Create and seed the database:
 
@@ -65,6 +79,8 @@ The local database URL is:
 ```text
 postgresql://fleettrack:fleettrack@localhost:5432/fleettrack
 ```
+
+The seeded database includes spatial driver and order points. PostGIS must be installed and `CREATE EXTENSION postgis` must be available in the target database before migrations/seeding are treated as production-like.
 
 ## Scripts
 
@@ -89,6 +105,7 @@ postgresql://fleettrack:fleettrack@localhost:5432/fleettrack
 - `GET /api/notifications`
 - `POST /api/notifications`
 - `POST /api/routes/:orderId/optimize`
+- `GET /api/ai/assignments`
 - `GET /api/driver/me`
 - `GET /api/driver/assignments`
 - `POST /api/driver/assignments/:orderId/accept`

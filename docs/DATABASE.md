@@ -24,10 +24,30 @@ Use Prisma for normal relational reads/writes, and use raw SQL for PostGIS-heavy
 
 ## Local Setup
 
-Start infrastructure:
+Copy the environment template:
+
+```bash
+cp .env.example .env
+```
+
+Start infrastructure with Docker:
 
 ```bash
 docker compose up -d
+```
+
+Native PostgreSQL and Redis are also supported. Use these defaults unless `.env` points somewhere else:
+
+```text
+PostgreSQL: localhost:5432
+Redis: 127.0.0.1:6379
+Database: fleettrack
+```
+
+PostGIS is required for production-like local data. The target database must support:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS postgis;
 ```
 
 Create the schema and seed demo data:
@@ -54,6 +74,8 @@ postgresql://fleettrack:fleettrack@localhost:5432/fleettrack
 Prisma 7 keeps the database URL in `prisma.config.ts`, while the runtime client uses the PostgreSQL adapter in `server/db/prisma.ts`.
 
 The admin UI and API are now database-backed. If Postgres is not running or the database has not been migrated and seeded, login and operational API calls will fail.
+
+The seeded data includes geography columns for order destinations and driver locations. Assignment suggestions use PostGIS distance ranking through `GET /api/ai/assignments`, so missing PostGIS support will show up as assignment or seeding failures.
 
 Route plans are stored in `route_plans`. With `GOOGLE_MAPS_API_KEY` configured, the API stores Google Directions distance, duration, and encoded polyline data. Without a key, it stores an internal fallback estimate so development workflows still work.
 
