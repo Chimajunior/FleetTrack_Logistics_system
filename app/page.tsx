@@ -27,7 +27,7 @@ import {
   UsersRound,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { demandForecast as seedForecast, drivers as seedDrivers, notifications as seedNotifications, orders as seedOrders } from "@/lib/mock-data";
 import type {
   AssignmentSuggestion,
@@ -271,6 +271,17 @@ export default function Dashboard() {
   const [customerUpdateError, setCustomerUpdateError] = useState("");
   const [customerUpdatePending, setCustomerUpdatePending] = useState(false);
 
+  const refreshLiveAssignmentSuggestions = useCallback(async (authToken: string) => {
+    if (isLocalDemoToken(authToken) || isLocalDriverDemoToken(authToken)) return;
+
+    try {
+      const suggestions = await apiRequest<AssignmentSuggestion[]>("/api/ai/assignments", authToken);
+      setAssignmentSuggestions(suggestions);
+    } catch {
+      // Assignment is already reflected in order state; keep the current list if refresh is unavailable.
+    }
+  }, []);
+
   useEffect(() => {
     const savedToken = window.localStorage.getItem("fleettrack_token");
     if (!savedToken) {
@@ -421,6 +432,8 @@ export default function Dashboard() {
           if (payload.type === "order.assigned") {
             setOrders((current) => current.map((order) => (order.id === payload.order.id ? payload.order : order)));
             setDrivers((current) => current.map((driver) => (driver.id === payload.driver.id ? payload.driver : driver)));
+            setAssignmentSuggestions((current) => current.filter((suggestion) => suggestion.orderId !== payload.order.id));
+            void refreshLiveAssignmentSuggestions(token);
             setRoutePlan(payload.routePlan);
             return;
           }
@@ -428,6 +441,7 @@ export default function Dashboard() {
           if (payload.type === "order.created") {
             setOrders((current) => [payload.order, ...current.filter((order) => order.id !== payload.order.id)]);
             setSelectedOrderId(payload.order.id);
+            void refreshLiveAssignmentSuggestions(token);
             return;
           }
 
@@ -482,7 +496,7 @@ export default function Dashboard() {
       socket?.close();
       window.clearInterval(fallback);
     };
-  }, [token]);
+  }, [refreshLiveAssignmentSuggestions, token]);
 
   useEffect(() => {
     if (!token || user?.role === "DRIVER" || !selectedOrderId || !isLocalDemoToken(token)) return;
@@ -606,6 +620,7 @@ export default function Dashboard() {
       setRoutePlan(result.routePlan);
       setSelectedOrderId(orderId);
       setSelectedDriverId(driverId);
+      await refreshLiveAssignmentSuggestions(token);
     } catch {
       assignDriverLocally(orderId, driverId);
       setLoadError("Live API unavailable. Changes are being previewed locally.");
@@ -924,9 +939,12 @@ export default function Dashboard() {
       routeProgress: Math.max(driver.routeProgress, 8)
     };
 
-    setOrders((current) => current.map((item) => (item.id === orderId ? updatedOrder : item)));
-    setDrivers((current) => current.map((item) => (item.id === driverId ? updatedDriver : item)));
-    setAssignmentSuggestions((current) => current.filter((suggestion) => suggestion.orderId !== orderId));
+    const nextOrders = orders.map((item) => (item.id === orderId ? updatedOrder : item));
+    const nextDrivers = drivers.map((item) => (item.id === driverId ? updatedDriver : item));
+
+    setOrders(nextOrders);
+    setDrivers(nextDrivers);
+    setAssignmentSuggestions(createLocalAssignmentSuggestions(nextOrders, nextDrivers));
     setRoutePlan(createLocalRoutePlan(updatedOrder, updatedDriver));
     setSelectedOrderId(orderId);
     setSelectedDriverId(driverId);
