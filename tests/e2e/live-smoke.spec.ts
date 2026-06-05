@@ -69,5 +69,9 @@ test("admin can use assignment recommendations and driver can process assignment
   if (await inTransitButton.isVisible()) {
     await inTransitButton.click();
     await expect(inTransitButton).toHaveClass(/status-button-active/);
+    await page.getByPlaceholder("Recipient name").first().fill("Sarah Johnson");
+    await page.getByPlaceholder("Delivery notes").first().fill("Left with front desk");
+    await page.getByRole("button", { name: "Delivered" }).first().click();
+    await expect(page.getByText("Proof captured for Sarah Johnson")).toBeVisible();
   }
 });

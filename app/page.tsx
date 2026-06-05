@@ -31,6 +31,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { demandForecast as seedForecast, drivers as seedDrivers, notifications as seedNotifications, orders as seedOrders } from "@/lib/mock-data";
 import type {
   AssignmentSuggestion,
+  DeliveryProofInput,
   DeliveryStatus,
   Driver,
   DriverAssignment,
@@ -742,7 +743,11 @@ export default function Dashboard() {
     }
   }
 
-  async function updateDriverOrderStatus(orderId: string, status: Extract<DeliveryStatus, "picked_up" | "in_transit" | "delayed" | "delivered">) {
+  async function updateDriverOrderStatus(
+    orderId: string,
+    status: Extract<DeliveryStatus, "picked_up" | "in_transit" | "delayed" | "delivered">,
+    proof?: DeliveryProofInput
+  ) {
     if (!token) return;
 
     if (isLocalDriverDemoToken(token)) {
@@ -755,13 +760,7 @@ export default function Dashboard() {
         method: "PATCH",
         body: JSON.stringify({
           status,
-          proof:
-            status === "delivered"
-              ? {
-                  recipientName: driverAssignments.find((assignment) => assignment.order.id === orderId)?.order.customer,
-                  notes: "Confirmed from driver workspace"
-                }
-              : undefined
+          proof: status === "delivered" ? proof : undefined
         })
       });
       applyDriverWorkflowResult(result);
@@ -1081,7 +1080,8 @@ export default function Dashboard() {
       order,
       driver: nextDriver,
       status: status === "delivered" ? ("completed" as DriverAssignment["status"]) : assignment.status,
-      completedAt: status === "delivered" ? new Date().toISOString() : assignment.completedAt
+      completedAt: status === "delivered" ? new Date().toISOString() : assignment.completedAt,
+      rejectionReason: assignment.rejectionReason
     };
 
     return { assignment: nextAssignment, order, driver: nextDriver };
@@ -1668,10 +1668,11 @@ function DriverWorkspace({
   notice: string;
   onAccept: (orderId: string) => Promise<void>;
   onReject: (orderId: string, reason: string) => Promise<void>;
-  onStatus: (orderId: string, status: (typeof driverStatusFlow)[number]) => Promise<void>;
+  onStatus: (orderId: string, status: (typeof driverStatusFlow)[number], proof?: DeliveryProofInput) => Promise<void>;
   onLogout: () => void;
 }) {
   const [rejectionReasonByOrder, setRejectionReasonByOrder] = useState<Record<string, string>>({});
+  const [proofByOrder, setProofByOrder] = useState<Record<string, { recipientName: string; notes: string }>>({});
   const activeAssignments = assignments.filter((assignment) => assignment.status !== "completed" && assignment.status !== "cancelled");
   const completedCount = assignments.filter((assignment) => assignment.status === "completed").length;
   const activeOrder = activeAssignments.find((assignment) => assignment.status === "accepted")?.order;
@@ -1760,17 +1761,63 @@ function DriverWorkspace({
             ) : null}
 
             {assignment.status === "accepted" ? (
-              <div className="driver-status-actions">
-                {driverStatusFlow.map((status) => (
-                  <button
-                    className={cx("status-button", assignment.order.status === status && "status-button-active")}
-                    key={status}
-                    onClick={() => onStatus(assignment.order.id, status)}
-                  >
-                    {statusLabels[status]}
-                  </button>
-                ))}
-              </div>
+              <>
+                <div className="driver-proof-grid">
+                  <label>
+                    Recipient
+                    <input
+                      value={proofByOrder[assignment.order.id]?.recipientName ?? assignment.order.customer}
+                      onChange={(event) =>
+                        setProofByOrder((current) => ({
+                          ...current,
+                          [assignment.order.id]: {
+                            recipientName: event.target.value,
+                            notes: current[assignment.order.id]?.notes ?? ""
+                          }
+                        }))
+                      }
+                      placeholder="Recipient name"
+                    />
+                  </label>
+                  <label>
+                    Notes
+                    <input
+                      value={proofByOrder[assignment.order.id]?.notes ?? ""}
+                      onChange={(event) =>
+                        setProofByOrder((current) => ({
+                          ...current,
+                          [assignment.order.id]: {
+                            recipientName: current[assignment.order.id]?.recipientName ?? assignment.order.customer,
+                            notes: event.target.value
+                          }
+                        }))
+                      }
+                      placeholder="Delivery notes"
+                    />
+                  </label>
+                </div>
+                <div className="driver-status-actions">
+                  {driverStatusFlow.map((status) => {
+                    const proof = proofByOrder[assignment.order.id] ?? {
+                      recipientName: assignment.order.customer,
+                      notes: ""
+                    };
+                    return (
+                      <button
+                        className={cx("status-button", assignment.order.status === status && "status-button-active")}
+                        key={status}
+                        onClick={() => onStatus(assignment.order.id, status, status === "delivered" ? proof : undefined)}
+                      >
+                        {statusLabels[status]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            ) : null}
+
+            {assignment.status === "completed" ? (
+              <div className="driver-proof-note">Proof captured for {assignment.order.customer}</div>
             ) : null}
           </article>
         ))}

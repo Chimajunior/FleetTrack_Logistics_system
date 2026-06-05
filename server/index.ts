@@ -158,7 +158,12 @@ app.patch("/api/driver/orders/:orderId/status", requireAuth(["DRIVER"]), async (
     }
 
     const orderId = routeParam(request.params.orderId);
-    const result = await updateDriverDeliveryStatus((request as AuthenticatedRequest).user.id, orderId, status, proof);
+    const result = await updateDriverDeliveryStatus(
+      (request as AuthenticatedRequest).user.id,
+      orderId,
+      status,
+      status === "delivered" ? sanitizeDeliveryProof(proof) : undefined
+    );
     if (!result) {
       response.status(404).json({ error: "Accepted assignment not found" });
       return;
@@ -485,6 +490,28 @@ function isDriverDeliveryStatus(status: DeliveryStatus | undefined): status is (
 
 function isPriority(priority: string | undefined): priority is "standard" | "express" | "critical" {
   return Boolean(priority && ["standard", "express", "critical"].includes(priority));
+}
+
+function sanitizeDeliveryProof(proof: DeliveryProofInput | undefined): DeliveryProofInput | undefined {
+  if (!proof) return undefined;
+
+  return {
+    recipientName: trimOptional(proof.recipientName, 120),
+    signatureUrl: trimOptional(proof.signatureUrl, 500),
+    photoUrl: trimOptional(proof.photoUrl, 500),
+    notes: trimOptional(proof.notes, 500),
+    deliveredLat: finiteOptional(proof.deliveredLat),
+    deliveredLng: finiteOptional(proof.deliveredLng)
+  };
+}
+
+function trimOptional(value: string | undefined, maxLength: number) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed.slice(0, maxLength) : undefined;
+}
+
+function finiteOptional(value: number | undefined) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 async function planAndPersistRoute(orderId: string, driverId?: string) {

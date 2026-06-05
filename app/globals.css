@@ -1319,7 +1319,8 @@ small {
   outline: 0;
 }
 
-.driver-rejection-note {
+.driver-rejection-note,
+.driver-proof-note {
   margin: 0 20px 20px;
   padding: 10px 12px;
   color: #7a360d;
@@ -1328,6 +1329,34 @@ small {
   border-radius: 8px;
   font-size: 13px;
   font-weight: 750;
+}
+
+.driver-proof-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 0 20px 14px;
+}
+
+.driver-proof-grid label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.driver-proof-grid input {
+  height: 40px;
+  min-width: 0;
+  color: var(--ink);
+  background: #f6f8fb;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  outline: 0;
+  padding: 0 10px;
 }
 
 .driver-status-actions .status-button {
