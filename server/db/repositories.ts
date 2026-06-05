@@ -135,6 +135,26 @@ type AssignmentRecord = {
   driver: DriverRecord;
 };
 
+export type AssignOrderResult =
+  | {
+      status: "assigned";
+      order: Order;
+      driver: Driver;
+    }
+  | {
+      status: "not_found" | "order_unavailable" | "driver_unavailable";
+      message: string;
+    };
+
+class AssignmentConflictError extends Error {
+  constructor(
+    readonly status: Extract<AssignOrderResult["status"], "order_unavailable" | "driver_unavailable">,
+    message: string
+  ) {
+    super(message);
+  }
+}
+
 type CreateOrderInput = {
   id?: string;
   customer: string;
@@ -583,61 +603,108 @@ export async function updateDriverDeliveryStatus(
   };
 }
 
-export async function assignOrder(orderId: string, driverId: string) {
-  const result = await prisma.$transaction(async (tx) => {
-    const [order, driver] = await Promise.all([
-      tx.order.findUnique({ where: { id: orderId } }),
-      tx.driver.findUnique({ where: { id: driverId } })
-    ]);
+export async function assignOrder(orderId: string, driverId: string): Promise<AssignOrderResult> {
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const [order, driver] = await Promise.all([
+        tx.order.findUnique({ where: { id: orderId } }),
+        tx.driver.findUnique({ where: { id: driverId } })
+      ]);
 
-    if (!order || !driver) return null;
-
-    const updatedOrder = await tx.order.update({
-      where: { id: orderId },
-      data: {
-        driverId,
-        status: prismaStatus.assigned,
-        etaMinutes: 24
+      if (!order || !driver) {
+        return {
+          status: "not_found" as const,
+          message: "Order or driver not found"
+        };
       }
+
+      if (order.driverId || order.status !== "PLACED") {
+        throw new AssignmentConflictError("order_unavailable", "Order is already assigned or no longer awaiting dispatch");
+      }
+
+      if (driver.status !== "AVAILABLE" || driver.activeOrderId) {
+        throw new AssignmentConflictError("driver_unavailable", "Driver is not available for a new assignment");
+      }
+
+      const orderUpdate = await tx.order.updateMany({
+        where: {
+          id: orderId,
+          driverId: null,
+          status: "PLACED"
+        },
+        data: {
+          driverId,
+          status: prismaStatus.assigned,
+          etaMinutes: 24
+        }
+      });
+
+      if (orderUpdate.count !== 1) {
+        throw new AssignmentConflictError("order_unavailable", "Order is already assigned or no longer awaiting dispatch");
+      }
+
+      const driverUpdate = await tx.driver.updateMany({
+        where: {
+          id: driverId,
+          status: "AVAILABLE",
+          activeOrderId: null
+        },
+        data: {
+          status: prismaDriverStatus.assigned,
+          activeOrderId: orderId,
+          routeProgress: Math.max(driver.routeProgress, 8)
+        }
+      });
+
+      if (driverUpdate.count !== 1) {
+        throw new AssignmentConflictError("driver_unavailable", "Driver is not available for a new assignment");
+      }
+
+      await tx.deliveryAssignment.create({
+        data: {
+          orderId,
+          driverId,
+          status: "OFFERED"
+        }
+      });
+
+      await tx.deliveryStatusEvent.create({
+        data: {
+          orderId,
+          status: prismaStatus.assigned,
+          note: `Assigned to ${driver.name}`
+        }
+      });
+
+      const [updatedOrder, updatedDriver] = await Promise.all([
+        tx.order.findUniqueOrThrow({ where: { id: orderId } }),
+        tx.driver.findUniqueOrThrow({ where: { id: driverId } })
+      ]);
+
+      return {
+        status: "assigned" as const,
+        order: updatedOrder,
+        driver: updatedDriver
+      };
     });
 
-    const updatedDriver = await tx.driver.update({
-      where: { id: driverId },
-      data: {
-        status: prismaDriverStatus.assigned,
-        activeOrderId: orderId,
-        routeProgress: Math.max(driver.routeProgress, 8)
-      }
-    });
-
-    await tx.deliveryAssignment.create({
-      data: {
-        orderId,
-        driverId,
-        status: "OFFERED"
-      }
-    });
-
-    await tx.deliveryStatusEvent.create({
-      data: {
-        orderId,
-        status: prismaStatus.assigned,
-        note: `Assigned to ${driver.name}`
-      }
-    });
+    if (result.status === "not_found") return result;
 
     return {
-      order: updatedOrder,
-      driver: updatedDriver
+      status: "assigned",
+      order: mapOrder(result.order),
+      driver: mapDriver(result.driver)
     };
-  });
+  } catch (error) {
+    if (error instanceof AssignmentConflictError) {
+      return {
+        status: error.status,
+        message: error.message
+      };
+    }
 
-  if (!result) return null;
-
-  return {
-    order: mapOrder(result.order),
-    driver: mapDriver(result.driver)
-  };
+    throw error;
+  }
 }
 
 export async function updateStatus(orderId: string, status: DeliveryStatus) {

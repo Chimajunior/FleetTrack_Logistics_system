@@ -621,7 +621,13 @@ export default function Dashboard() {
       setSelectedOrderId(orderId);
       setSelectedDriverId(driverId);
       await refreshLiveAssignmentSuggestions(token);
-    } catch {
+      setLoadError("");
+    } catch (error) {
+      if (error instanceof ApiRequestError) {
+        setLoadError(error.message);
+        return;
+      }
+
       assignDriverLocally(orderId, driverId);
       setLoadError("Live API unavailable. Changes are being previewed locally.");
     }
@@ -1830,6 +1836,12 @@ function AiTile({ icon, title, value }: { icon: ReactNode; title: string; value:
   );
 }
 
+class ApiRequestError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+
 async function apiRequest<T>(path: string, token?: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${apiBase}${path}`, {
     ...init,
@@ -1841,10 +1853,19 @@ async function apiRequest<T>(path: string, token?: string, init: RequestInit = {
   });
 
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`);
+    const body = await readErrorBody(response);
+    throw new ApiRequestError(response.status, body?.error ?? `API request failed: ${response.status}`);
   }
 
   return response.json() as Promise<T>;
+}
+
+async function readErrorBody(response: Response): Promise<{ error?: string } | null> {
+  try {
+    return (await response.json()) as { error?: string };
+  } catch {
+    return null;
+  }
 }
 
 async function apiReady() {

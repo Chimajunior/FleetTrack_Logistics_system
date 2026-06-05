@@ -290,8 +290,13 @@ app.post("/api/orders/:orderId/assign", async (request, response, next) => {
     }
 
     const result = await assignOrder(orderId, driverId);
-    if (!result) {
-      response.status(404).json({ error: "Order or driver not found" });
+    if (result.status === "not_found") {
+      response.status(404).json({ error: result.message });
+      return;
+    }
+
+    if (result.status !== "assigned") {
+      response.status(409).json({ error: result.message });
       return;
     }
 
