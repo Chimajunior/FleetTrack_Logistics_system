@@ -74,6 +74,7 @@ const driverStatusFlow: Array<Extract<DeliveryStatus, "picked_up" | "in_transit"
   "delayed",
   "delivered"
 ];
+const rejectionReasons = ["Driver unavailable", "Vehicle capacity issue", "Route conflict"] as const;
 
 type AuthUser = {
   id: string;
@@ -721,18 +722,18 @@ export default function Dashboard() {
     }
   }
 
-  async function rejectDriverAssignment(orderId: string) {
+  async function rejectDriverAssignment(orderId: string, reason: string) {
     if (!token) return;
 
     if (isLocalDriverDemoToken(token)) {
-      applyDriverWorkflowResult(rejectDriverAssignmentLocally(orderId));
+      applyDriverWorkflowResult(rejectDriverAssignmentLocally(orderId, reason));
       return;
     }
 
     try {
       const result = await apiRequest<DriverWorkflowResult>(`/api/driver/assignments/${orderId}/reject`, token, {
         method: "POST",
-        body: JSON.stringify({ reason: "Driver unavailable" })
+        body: JSON.stringify({ reason })
       });
       applyDriverWorkflowResult(result);
       setDriverNotice("");
@@ -1027,7 +1028,7 @@ export default function Dashboard() {
     return { assignment: nextAssignment, order, driver: nextDriver };
   }
 
-  function rejectDriverAssignmentLocally(orderId: string): DriverWorkflowResult | null {
+  function rejectDriverAssignmentLocally(orderId: string, reason: string): DriverWorkflowResult | null {
     const assignment = driverAssignments.find((item) => item.order.id === orderId);
     const driver = driverProfile ?? seedDrivers.find((item) => item.id === localDriverId);
     if (!assignment || !driver) return null;
@@ -1050,7 +1051,7 @@ export default function Dashboard() {
       driver: nextDriver,
       status: "rejected" as DriverAssignment["status"],
       rejectedAt: new Date().toISOString(),
-      rejectionReason: "Driver unavailable"
+      rejectionReason: reason
     };
 
     return { assignment: nextAssignment, order, driver: nextDriver };
@@ -1666,10 +1667,11 @@ function DriverWorkspace({
   driver: Driver | null;
   notice: string;
   onAccept: (orderId: string) => Promise<void>;
-  onReject: (orderId: string) => Promise<void>;
+  onReject: (orderId: string, reason: string) => Promise<void>;
   onStatus: (orderId: string, status: (typeof driverStatusFlow)[number]) => Promise<void>;
   onLogout: () => void;
 }) {
+  const [rejectionReasonByOrder, setRejectionReasonByOrder] = useState<Record<string, string>>({});
   const activeAssignments = assignments.filter((assignment) => assignment.status !== "completed" && assignment.status !== "cancelled");
   const completedCount = assignments.filter((assignment) => assignment.status === "completed").length;
   const activeOrder = activeAssignments.find((assignment) => assignment.status === "accepted")?.order;
@@ -1724,15 +1726,37 @@ function DriverWorkspace({
 
             {assignment.status === "offered" ? (
               <div className="driver-actions">
+                <label className="driver-reject-reason">
+                  Reason
+                  <select
+                    value={rejectionReasonByOrder[assignment.order.id] ?? rejectionReasons[0]}
+                    onChange={(event) =>
+                      setRejectionReasonByOrder((current) => ({
+                        ...current,
+                        [assignment.order.id]: event.target.value
+                      }))
+                    }
+                  >
+                    {rejectionReasons.map((reason) => (
+                      <option value={reason} key={reason}>
+                        {reason}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <button className="primary-button" onClick={() => onAccept(assignment.order.id)}>
                   <CheckCircle2 size={17} />
                   Accept
                 </button>
-                <button className="secondary-button" onClick={() => onReject(assignment.order.id)}>
+                <button className="secondary-button" onClick={() => onReject(assignment.order.id, rejectionReasonByOrder[assignment.order.id] ?? rejectionReasons[0])}>
                   <X size={17} />
                   Reject
                 </button>
               </div>
+            ) : null}
+
+            {assignment.status === "rejected" && assignment.rejectionReason ? (
+              <div className="driver-rejection-note">Rejected: {assignment.rejectionReason}</div>
             ) : null}
 
             {assignment.status === "accepted" ? (

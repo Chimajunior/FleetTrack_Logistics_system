@@ -1299,6 +1299,37 @@ small {
   padding: 0 20px 20px;
 }
 
+.driver-reject-reason {
+  display: grid;
+  gap: 5px;
+  min-width: 210px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.driver-reject-reason select {
+  height: 40px;
+  color: var(--ink);
+  background: #f6f8fb;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  outline: 0;
+}
+
+.driver-rejection-note {
+  margin: 0 20px 20px;
+  padding: 10px 12px;
+  color: #7a360d;
+  background: #fff0e8;
+  border: 1px solid #ffd4c0;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 750;
+}
+
 .driver-status-actions .status-button {
   min-width: 120px;
   padding: 0 12px;

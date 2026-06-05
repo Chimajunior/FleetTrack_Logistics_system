@@ -131,7 +131,8 @@ app.post("/api/driver/assignments/:orderId/reject", requireAuth(["DRIVER"]), asy
   try {
     const { reason } = request.body as { reason?: string };
     const orderId = routeParam(request.params.orderId);
-    const result = await respondToDriverAssignment((request as AuthenticatedRequest).user.id, orderId, "reject", reason);
+    const rejectionReason = typeof reason === "string" ? reason.trim().slice(0, 180) : undefined;
+    const result = await respondToDriverAssignment((request as AuthenticatedRequest).user.id, orderId, "reject", rejectionReason);
     if (!result) {
       response.status(404).json({ error: "Open assignment not found" });
       return;

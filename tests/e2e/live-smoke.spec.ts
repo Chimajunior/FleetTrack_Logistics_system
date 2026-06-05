@@ -47,10 +47,19 @@ test("admin can use assignment recommendations and driver can process assignment
   await expect(page.locator(".route-summary")).toBeVisible();
 
   await page.getByRole("button", { name: "Sign out" }).click();
-  await page.getByRole("button", { name: "Driver demo" }).click();
+  await page.getByPlaceholder("Email").fill("drv-05@fleettrack.local");
+  await page.getByPlaceholder("Password").fill("Driver2026!");
   await page.getByRole("button", { name: "Sign in" }).click();
 
   await expect(page.getByText("FleetTrack Driver")).toBeVisible();
+  await page.getByRole("combobox").first().selectOption("Route conflict");
+  await page.getByRole("button", { name: "Reject" }).first().click();
+  await expect(page.getByText("Rejected: Route conflict")).toBeVisible();
+
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: "Driver demo" }).click();
+  await page.getByRole("button", { name: "Sign in" }).click();
+
   const acceptButton = page.getByRole("button", { name: "Accept" }).first();
   if (await acceptButton.isVisible()) {
     await acceptButton.click();
