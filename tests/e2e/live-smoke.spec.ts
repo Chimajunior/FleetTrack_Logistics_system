@@ -66,12 +66,19 @@ test("admin can use assignment recommendations and driver can process assignment
   }
 
   const inTransitButton = page.getByRole("button", { name: "In Transit" }).first();
-  if (await inTransitButton.isVisible()) {
-    await inTransitButton.click();
-    await expect(inTransitButton).toHaveClass(/status-button-active/);
-    await page.getByPlaceholder("Recipient name").first().fill("Sarah Johnson");
-    await page.getByPlaceholder("Delivery notes").first().fill("Left with front desk");
-    await page.getByRole("button", { name: "Delivered" }).first().click();
-    await expect(page.getByText("Proof captured for Sarah Johnson")).toBeVisible();
-  }
+  await expect(inTransitButton).toBeVisible();
+  await inTransitButton.click();
+  await expect(inTransitButton).toHaveClass(/status-button-active/);
+  await page.getByPlaceholder("Recipient name").first().fill("Sarah Johnson");
+  await page.getByPlaceholder("Delivery notes").first().fill("Left with front desk");
+  await page.getByRole("button", { name: "Delivered" }).first().click();
+  await expect(page.getByText("Proof captured for Sarah Johnson")).toBeVisible();
+
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByPlaceholder("Email").fill("admin@fleettrack.local");
+  await page.getByPlaceholder("Password").fill("FleetTrack2026!");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.locator(".order-row", { hasText: "ORD-2026-001" }).click();
+  await expect(page.getByText("Proof of delivery")).toBeVisible();
+  await expect(page.getByText("Left with front desk")).toBeVisible();
 });

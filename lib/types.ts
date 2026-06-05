@@ -28,6 +28,7 @@ export type Order = {
   placedAt: string;
   eta: string;
   destination: LatLng;
+  deliveryProof?: DeliveryProof;
 };
 
 export type Driver = {
@@ -83,6 +84,10 @@ export type DeliveryProofInput = {
   notes?: string;
   deliveredLat?: number;
   deliveredLng?: number;
+};
+
+export type DeliveryProof = DeliveryProofInput & {
+  deliveredAt: string;
 };
 
 export type RoutePlan = {

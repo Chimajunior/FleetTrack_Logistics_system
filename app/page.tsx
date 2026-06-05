@@ -1283,6 +1283,15 @@ export default function Dashboard() {
                       <Detail label="ETA" value={selectedOrder.eta} />
                     </div>
 
+                    {selectedOrder.deliveryProof ? (
+                      <div className="proof-summary">
+                        <span>Proof of delivery</span>
+                        <strong>{selectedOrder.deliveryProof.recipientName ?? selectedOrder.customer}</strong>
+                        {selectedOrder.deliveryProof.notes ? <p>{selectedOrder.deliveryProof.notes}</p> : null}
+                        <small>{formatProofTime(selectedOrder.deliveryProof.deliveredAt)}</small>
+                      </div>
+                    ) : null}
+
                     <label className="select-label">
                       Assign driver
                       <select
@@ -2033,6 +2042,15 @@ function driverCanCarryOrder(driver: Driver, order: Order) {
 
 function driverCapacityLabel(driver: Driver) {
   return driver.capacityKg == null ? "open capacity" : `${driver.capacityKg.toFixed(1)} kg cap`;
+}
+
+function formatProofTime(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    month: "short",
+    day: "numeric"
+  }).format(new Date(value));
 }
 
 function createLocalDriverAssignments(): DriverAssignment[] {

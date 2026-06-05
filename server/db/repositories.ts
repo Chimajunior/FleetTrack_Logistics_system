@@ -75,6 +75,17 @@ type OrderRecord = {
   etaMinutes: number | null;
   destinationLat: number;
   destinationLng: number;
+  deliveryProof?: DeliveryProofRecord | null;
+};
+
+type DeliveryProofRecord = {
+  recipientName: string | null;
+  signatureUrl: string | null;
+  photoUrl: string | null;
+  notes: string | null;
+  deliveredLat: number | null;
+  deliveredLng: number | null;
+  deliveredAt: Date;
 };
 
 type DriverRecord = {
@@ -180,6 +191,9 @@ type CreateNotificationInput = {
 
 export async function listOrders(): Promise<Order[]> {
   const records = await prisma.order.findMany({
+    include: {
+      deliveryProof: true
+    },
     orderBy: { placedAt: "desc" }
   });
 
@@ -527,7 +541,7 @@ export async function updateDriverDeliveryStatus(
   if (!assignment) return null;
 
   const result = await prisma.$transaction(async (tx) => {
-    const updatedOrder = await tx.order.update({
+    await tx.order.update({
       where: { id: orderId },
       data: {
         status: prismaStatus[status],
@@ -599,6 +613,13 @@ export async function updateDriverDeliveryStatus(
         status: prismaStatus[status],
         note: proof?.notes,
         createdBy: userId
+      }
+    });
+
+    const updatedOrder = await tx.order.findUniqueOrThrow({
+      where: { id: orderId },
+      include: {
+        deliveryProof: true
       }
     });
 
@@ -901,7 +922,20 @@ function mapOrder(record: OrderRecord): Order {
     destination: {
       lat: record.destinationLat,
       lng: record.destinationLng
-    }
+    },
+    deliveryProof: record.deliveryProof ? mapDeliveryProof(record.deliveryProof) : undefined
+  };
+}
+
+function mapDeliveryProof(record: DeliveryProofRecord) {
+  return {
+    recipientName: record.recipientName ?? undefined,
+    signatureUrl: record.signatureUrl ?? undefined,
+    photoUrl: record.photoUrl ?? undefined,
+    notes: record.notes ?? undefined,
+    deliveredLat: record.deliveredLat ?? undefined,
+    deliveredLng: record.deliveredLng ?? undefined,
+    deliveredAt: record.deliveredAt.toISOString()
   };
 }
 
