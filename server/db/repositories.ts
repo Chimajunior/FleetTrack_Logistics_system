@@ -84,6 +84,7 @@ type DriverRecord = {
   status: string;
   vehicle: string;
   rating: number;
+  capacityKg: number | null;
   activeOrderId: string | null;
   latestLat: number;
   latestLng: number;
@@ -119,6 +120,8 @@ type AssignmentSuggestionRecord = {
   suggestedDriverId: string | null;
   driverName: string | null;
   priority: string;
+  weightKg: number;
+  capacityKg: number | null;
   distanceMeters: number | null;
   score: number;
 };
@@ -280,53 +283,63 @@ export async function listDemandForecast(): Promise<ForecastPoint[]> {
 
 export async function listAssignmentSuggestions(): Promise<AssignmentSuggestion[]> {
   const records = await prisma.$queryRaw<AssignmentSuggestionRecord[]>`
-    WITH ranked_candidates AS (
+    WITH open_orders AS (
       SELECT
         o.id AS "orderId",
-        d.id AS "suggestedDriverId",
-        d.name AS "driverName",
         o.priority::text AS priority,
-        ROUND(ST_Distance(d.latest_point, o.destination_point))::int AS "distanceMeters",
-        ROW_NUMBER() OVER (
-          PARTITION BY o.id
-          ORDER BY ST_Distance(d.latest_point, o.destination_point), d.rating DESC, d.name ASC
-        ) AS candidate_rank
+        o.weight_kg AS "weightKg",
+        o.destination_point
       FROM orders o
-      JOIN drivers d ON d.status = 'available'
       WHERE o.driver_id IS NULL
         AND o.status = 'placed'
         AND o.destination_point IS NOT NULL
-        AND d.latest_point IS NOT NULL
     )
     SELECT
-      "orderId",
-      "suggestedDriverId",
-      "driverName",
-      priority,
-      "distanceMeters",
-      GREATEST(
-        72,
-        LEAST(
-          98,
-          ROUND(
-            CASE priority
-              WHEN 'critical' THEN 98
-              WHEN 'express' THEN 94
-              ELSE 90
-            END - LEAST(18, "distanceMeters" / 750.0)
-          )::int
+      o."orderId",
+      candidate.id AS "suggestedDriverId",
+      candidate.name AS "driverName",
+      o.priority,
+      o."weightKg",
+      candidate.capacity_kg AS "capacityKg",
+      ROUND(candidate.distance_meters)::int AS "distanceMeters",
+      CASE
+        WHEN candidate.id IS NULL THEN 72
+        ELSE GREATEST(
+          72,
+          LEAST(
+            98,
+            ROUND(
+              CASE priority
+                WHEN 'critical' THEN 98
+                WHEN 'express' THEN 94
+                ELSE 90
+              END - LEAST(18, candidate.distance_meters / 750.0)
+            )::int
+          )
         )
-      ) AS score
-    FROM ranked_candidates
-    WHERE candidate_rank = 1
+      END AS score
+    FROM open_orders o
+    LEFT JOIN LATERAL (
+      SELECT
+        d.id,
+        d.name,
+        d.capacity_kg,
+        ST_Distance(d.latest_point, o.destination_point) AS distance_meters
+      FROM drivers d
+      WHERE d.status = 'available'
+        AND d.latest_point IS NOT NULL
+        AND (d.capacity_kg IS NULL OR d.capacity_kg >= o."weightKg")
+      ORDER BY distance_meters, d.rating DESC, d.name ASC
+      LIMIT 1
+    ) candidate ON TRUE
     ORDER BY
       CASE priority
         WHEN 'critical' THEN 1
         WHEN 'express' THEN 2
         ELSE 3
       END,
-      "distanceMeters",
-      "orderId"
+      candidate.distance_meters NULLS LAST,
+      o."orderId"
   `;
 
   return records.map((record) => ({
@@ -335,8 +348,8 @@ export async function listAssignmentSuggestions(): Promise<AssignmentSuggestion[
     score: record.score,
     distanceMeters: record.distanceMeters ?? undefined,
     reason: record.suggestedDriverId
-      ? `${record.priority} order matched to ${record.driverName} ${formatMiles(record.distanceMeters)} from destination`
-      : `${record.priority} order is waiting for an available driver`
+      ? `${record.priority} order matched to ${record.driverName} ${formatMiles(record.distanceMeters)} from destination with ${formatCapacity(record.capacityKg)} capacity`
+      : `${record.priority} order needs ${record.weightKg.toFixed(1)} kg capacity; no available driver can carry it`
   }));
 }
 
@@ -626,6 +639,10 @@ export async function assignOrder(orderId: string, driverId: string): Promise<As
         throw new AssignmentConflictError("driver_unavailable", "Driver is not available for a new assignment");
       }
 
+      if (driver.capacityKg != null && driver.capacityKg < order.weightKg) {
+        throw new AssignmentConflictError("driver_unavailable", "Driver capacity is too low for this order");
+      }
+
       const orderUpdate = await tx.order.updateMany({
         where: {
           id: orderId,
@@ -896,6 +913,7 @@ function mapDriver(record: DriverRecord): Driver {
     status: apiDriverStatus[record.status] ?? "offline",
     vehicle: record.vehicle,
     rating: record.rating,
+    capacityKg: record.capacityKg ?? undefined,
     activeOrderId: record.activeOrderId ?? undefined,
     location: {
       lat: record.latestLat,
@@ -957,6 +975,10 @@ function relativeMinutes(date: Date) {
 function formatMiles(distanceMeters: number | null) {
   if (distanceMeters == null) return "nearby";
   return `${(distanceMeters / 1609.34).toFixed(1)} mi`;
+}
+
+function formatCapacity(capacityKg: number | null) {
+  return capacityKg == null ? "open" : `${capacityKg.toFixed(1)} kg`;
 }
 
 async function nextOrderId() {

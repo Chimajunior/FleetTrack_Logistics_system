@@ -947,6 +947,11 @@ export default function Dashboard() {
     const driver = drivers.find((item) => item.id === driverId);
     if (!order || !driver) return;
 
+    if (!driverCanCarryOrder(driver, order)) {
+      setLoadError("Driver capacity is too low for this order");
+      return;
+    }
+
     const updatedOrder = {
       ...order,
       driverId,
@@ -1284,11 +1289,15 @@ export default function Dashboard() {
                         onChange={(event) => event.target.value && assignDriver(selectedOrder.id, event.target.value)}
                       >
                         <option value="">Select driver</option>
-                        {[...availableDrivers, ...drivers.filter((driver) => driver.id === selectedOrder.driverId)].map((driver) => (
-                          <option value={driver.id} key={driver.id}>
-                            {driver.name} · {driver.vehicle}
-                          </option>
-                        ))}
+                        {[...availableDrivers, ...drivers.filter((driver) => driver.id === selectedOrder.driverId)].map((driver) => {
+                          const canCarryOrder = driverCanCarryOrder(driver, selectedOrder);
+                          return (
+                            <option disabled={!canCarryOrder} value={driver.id} key={driver.id}>
+                              {driver.name} · {driver.vehicle} · {driverCapacityLabel(driver)}
+                              {!canCarryOrder ? " · over capacity" : ""}
+                            </option>
+                          );
+                        })}
                       </select>
                     </label>
 
@@ -1343,7 +1352,7 @@ export default function Dashboard() {
                       <span className="driver-avatar">{driver.initials}</span>
                       <span className="driver-copy">
                         <strong>{driver.name}</strong>
-                        <small>{driver.vehicle} · {driver.rating.toFixed(1)}</small>
+                        <small>{driver.vehicle} · {driver.rating.toFixed(1)} · {driverCapacityLabel(driver)}</small>
                         <span className="progress-bar">
                           <span style={{ width: `${driver.routeProgress}%` }} />
                         </span>
@@ -1920,12 +1929,11 @@ function isLocalDriverDemoToken(token: string | null | undefined) {
 }
 
 function createLocalAssignmentSuggestions(orders: Order[], drivers: Driver[]): AssignmentSuggestion[] {
-  const availableDrivers = drivers.filter((driver) => driver.status === "available");
-
   return orders
     .filter((order) => !order.driverId && order.status === "placed")
     .map((order) => {
-      const rankedDrivers = availableDrivers
+      const rankedDrivers = drivers
+        .filter((driver) => driver.status === "available" && driverCanCarryOrder(driver, order))
         .map((driver) => ({
           driver,
           distanceMeters: distanceBetween(driver.location, order.destination)
@@ -1942,10 +1950,18 @@ function createLocalAssignmentSuggestions(orders: Order[], drivers: Driver[]): A
         score,
         distanceMeters: nearest ? Math.round(nearest.distanceMeters) : undefined,
         reason: nearest
-          ? `${order.priority} order matched to ${nearest.driver.name} ${(nearest.distanceMeters / 1609.34).toFixed(1)} mi from destination`
-          : `${order.priority} order is waiting for an available driver`
+          ? `${order.priority} order matched to ${nearest.driver.name} ${(nearest.distanceMeters / 1609.34).toFixed(1)} mi from destination with ${driverCapacityLabel(nearest.driver)} capacity`
+          : `${order.priority} order needs ${order.weightKg.toFixed(1)} kg capacity; no available driver can carry it`
       };
     });
+}
+
+function driverCanCarryOrder(driver: Driver, order: Order) {
+  return driver.capacityKg == null || driver.capacityKg >= order.weightKg;
+}
+
+function driverCapacityLabel(driver: Driver) {
+  return driver.capacityKg == null ? "open capacity" : `${driver.capacityKg.toFixed(1)} kg cap`;
 }
 
 function createLocalDriverAssignments(): DriverAssignment[] {

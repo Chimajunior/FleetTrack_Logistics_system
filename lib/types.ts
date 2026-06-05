@@ -37,6 +37,7 @@ export type Driver = {
   status: DriverStatus;
   vehicle: string;
   rating: number;
+  capacityKg?: number;
   activeOrderId?: string;
   location: LatLng;
   routeProgress: number;

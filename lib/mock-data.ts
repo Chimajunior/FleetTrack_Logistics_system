@@ -94,6 +94,7 @@ export const drivers: Driver[] = [
     status: "assigned",
     vehicle: "Van 14",
     rating: 4.9,
+    capacityKg: 45,
     activeOrderId: "ORD-2026-001",
     location: { lat: 40.719, lng: -73.996 },
     routeProgress: 68
@@ -105,6 +106,7 @@ export const drivers: Driver[] = [
     status: "assigned",
     vehicle: "Bike 08",
     rating: 4.8,
+    capacityKg: 16,
     activeOrderId: "ORD-2026-003",
     location: { lat: 40.711, lng: -74.011 },
     routeProgress: 52
@@ -116,6 +118,7 @@ export const drivers: Driver[] = [
     status: "assigned",
     vehicle: "Car 22",
     rating: 4.7,
+    capacityKg: 22,
     activeOrderId: "ORD-2026-002",
     location: { lat: 40.736, lng: -73.986 },
     routeProgress: 24
@@ -127,6 +130,7 @@ export const drivers: Driver[] = [
     status: "assigned",
     vehicle: "Van 03",
     rating: 4.6,
+    capacityKg: 55,
     activeOrderId: "ORD-2026-005",
     location: { lat: 40.715, lng: -73.989 },
     routeProgress: 36
@@ -138,6 +142,7 @@ export const drivers: Driver[] = [
     status: "available",
     vehicle: "Bike 11",
     rating: 4.9,
+    capacityKg: 8,
     location: { lat: 40.728, lng: -73.981 },
     routeProgress: 0
   },
@@ -148,6 +153,7 @@ export const drivers: Driver[] = [
     status: "offline",
     vehicle: "Car 17",
     rating: 4.5,
+    capacityKg: 20,
     location: { lat: 40.746, lng: -73.989 },
     routeProgress: 0
   }
