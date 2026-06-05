@@ -12,6 +12,29 @@ test("admin can use assignment recommendations and driver can process assignment
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
   await expect(page.locator(".suggestion-card").first()).toBeVisible();
 
+  await page.getByRole("button", { name: "Orders" }).click();
+  await expect(page.getByRole("heading", { name: "Orders", level: 1 })).toBeVisible();
+  await expect(page.locator(".operations-layout")).toBeVisible();
+  await expect(page.locator(".tracking-layout")).toHaveCount(0);
+  await expect(page.locator(".insights-layout")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Drivers" }).click();
+  await expect(page.getByRole("heading", { name: "Drivers", level: 1 })).toBeVisible();
+  await expect(page.locator(".tracking-layout")).toBeVisible();
+  await expect(page.locator(".operations-layout")).toHaveCount(0);
+  await expect(page.locator(".insights-layout")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "AI Ops" }).click();
+  await expect(page.getByRole("heading", { name: "AI Ops", level: 1 })).toBeVisible();
+  await expect(page.locator(".insights-layout")).toBeVisible();
+  await expect(page.locator(".operations-layout")).toHaveCount(0);
+  await expect(page.locator(".tracking-layout")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Dashboard" }).click();
+  await expect(page.locator(".operations-layout")).toBeVisible();
+  await expect(page.locator(".tracking-layout")).toBeVisible();
+  await expect(page.locator(".insights-layout")).toBeVisible();
+
   const suggestedOrderId = (await page.locator(".suggestion-card strong").first().textContent())?.trim();
   expect(suggestedOrderId).toBeTruthy();
 

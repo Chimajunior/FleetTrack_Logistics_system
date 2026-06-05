@@ -105,6 +105,16 @@ type CustomerUpdateFormState = {
   tone: NotificationItem["tone"];
 };
 
+type DashboardSection = "Dashboard" | "Orders" | "Drivers" | "Live Tracking" | "AI Ops";
+
+const sectionCopy: Record<DashboardSection, string> = {
+  Dashboard: "Orders, drivers, routes, and delivery risk in one live operations panel.",
+  Orders: "Review the active order queue and assign dispatch-ready deliveries.",
+  Drivers: "Monitor driver availability, route progress, and active workload.",
+  "Live Tracking": "Track the selected driver and optimize the current delivery route.",
+  "AI Ops": "Review assignment recommendations, demand forecasts, and customer updates."
+};
+
 const emptyOrderForm: OrderFormState = {
   customer: "",
   phone: "",
@@ -256,7 +266,7 @@ export default function Dashboard() {
   const [selectedOrderId, setSelectedOrderId] = useState(seedOrders[0]?.id);
   const [selectedDriverId, setSelectedDriverId] = useState(seedDrivers[0]?.id);
   const [query, setQuery] = useState("");
-  const [section, setSection] = useState("Dashboard");
+  const [section, setSection] = useState<DashboardSection>("Dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [wsStatus, setWsStatus] = useState<"connecting" | "live" | "offline">("connecting");
   const [driverProfile, setDriverProfile] = useState<Driver | null>(null);
@@ -541,6 +551,11 @@ export default function Dashboard() {
   const activeDrivers = drivers.filter((driver) => driver.status !== "offline").length;
   const deliveredToday = orders.filter((order) => order.status === "delivered").length + 155;
   const maxForecast = Math.max(1, ...forecast.map((item) => item.orders));
+  const showMetrics = section === "Dashboard";
+  const showOperations = section === "Dashboard" || section === "Orders";
+  const showTracking = section === "Dashboard" || section === "Drivers" || section === "Live Tracking";
+  const showInsights = section === "Dashboard" || section === "AI Ops";
+  const canCreateOrder = section === "Dashboard" || section === "Orders";
 
   async function handleLogin(email: string, password: string) {
     setAuthError("");
@@ -1072,7 +1087,7 @@ export default function Dashboard() {
     { label: "Drivers", icon: UsersRound },
     { label: "Live Tracking", icon: MapPin },
     { label: "AI Ops", icon: Sparkles }
-  ];
+  ] as const;
 
   if (!authReady) {
     return <div className="loading-screen">Loading FleetTrack</div>;
@@ -1168,260 +1183,270 @@ export default function Dashboard() {
           <section className="page-heading">
             <div>
               <h1>{section}</h1>
-              <p>Orders, drivers, routes, and delivery risk in one live operations panel.</p>
+              <p>{sectionCopy[section]}</p>
             </div>
-            <button className="primary-button" onClick={openOrderDialog}>
-              <PackagePlus size={18} />
-              New order
-            </button>
+            {canCreateOrder ? (
+              <button className="primary-button" onClick={openOrderDialog}>
+                <PackagePlus size={18} />
+                New order
+              </button>
+            ) : null}
           </section>
 
-          <section className="metrics-grid" aria-label="Delivery metrics">
-            <Metric title="Total Orders" value="1,284" note="+12.5% from last week" icon={<Boxes size={21} />} tone="blue" />
-            <Metric title="In Transit" value={String(inTransit)} note="8 arriving soon" icon={<Truck size={21} />} tone="green" />
-            <Metric title="Delivered Today" value={String(deliveredToday)} note="+8.2% from yesterday" icon={<CheckCircle2 size={21} />} tone="mint" />
-            <Metric title="Active Drivers" value={String(activeDrivers)} note={`${drivers.length - activeDrivers} offline`} icon={<UsersRound size={21} />} tone="orange" />
-          </section>
+          {showMetrics ? (
+            <section className="metrics-grid" aria-label="Delivery metrics">
+              <Metric title="Total Orders" value="1,284" note="+12.5% from last week" icon={<Boxes size={21} />} tone="blue" />
+              <Metric title="In Transit" value={String(inTransit)} note="8 arriving soon" icon={<Truck size={21} />} tone="green" />
+              <Metric title="Delivered Today" value={String(deliveredToday)} note="+8.2% from yesterday" icon={<CheckCircle2 size={21} />} tone="mint" />
+              <Metric title="Active Drivers" value={String(activeDrivers)} note={`${drivers.length - activeDrivers} offline`} icon={<UsersRound size={21} />} tone="orange" />
+            </section>
+          ) : null}
 
-          <section className="operations-layout">
-            <div className="orders-panel panel">
-              <div className="panel-header">
-                <div>
-                  <h2>Orders</h2>
-                  <p>{filteredOrders.length} orders found</p>
+          {showOperations ? (
+            <section className="operations-layout">
+              <div className="orders-panel panel">
+                <div className="panel-header">
+                  <div>
+                    <h2>Orders</h2>
+                    <p>{filteredOrders.length} orders found</p>
+                  </div>
+                  <label className="panel-search">
+                    <Search size={16} />
+                    <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search orders..." />
+                  </label>
                 </div>
-                <label className="panel-search">
-                  <Search size={16} />
-                  <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search orders..." />
-                </label>
+
+                <div className="orders-table">
+                  <div className="table-row table-head">
+                    <span>Order ID</span>
+                    <span>Customer</span>
+                    <span>Delivery Address</span>
+                    <span>Driver</span>
+                    <span>Status</span>
+                  </div>
+                  {filteredOrders.map((order) => {
+                    const driver = drivers.find((item) => item.id === order.driverId);
+                    return (
+                      <button
+                        className={cx("table-row order-row", selectedOrder?.id === order.id && "selected")}
+                        key={order.id}
+                        onClick={() => {
+                          setSelectedOrderId(order.id);
+                          if (driver) setSelectedDriverId(driver.id);
+                        }}
+                      >
+                        <span className="order-cell">
+                          <PackageCheck size={17} />
+                          <span>
+                            <strong>{order.id}</strong>
+                            <small>
+                              {order.items} items, {order.weightKg} kg
+                            </small>
+                          </span>
+                        </span>
+                        <span>
+                          <strong>{order.customer}</strong>
+                          <small>{order.phone}</small>
+                        </span>
+                        <span>{order.address}</span>
+                        <span>{driver?.name ?? "Unassigned"}</span>
+                        <span>
+                          <StatusBadge status={order.status} />
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
-              <div className="orders-table">
-                <div className="table-row table-head">
-                  <span>Order ID</span>
-                  <span>Customer</span>
-                  <span>Delivery Address</span>
-                  <span>Driver</span>
-                  <span>Status</span>
+              <aside className="panel dispatch-panel">
+                <div className="panel-header compact">
+                  <div>
+                    <h2>Dispatch</h2>
+                    <p>{selectedOrder?.id}</p>
+                  </div>
+                  <Command size={19} />
                 </div>
-                {filteredOrders.map((order) => {
-                  const driver = drivers.find((item) => item.id === order.driverId);
-                  return (
+
+                {selectedOrder ? (
+                  <>
+                    <div className="detail-stack">
+                      <Detail label="Customer" value={selectedOrder.customer} />
+                      <Detail label="Address" value={selectedOrder.address} />
+                      <Detail label="Priority" value={selectedOrder.priority} />
+                      <Detail label="ETA" value={selectedOrder.eta} />
+                    </div>
+
+                    <label className="select-label">
+                      Assign driver
+                      <select
+                        value={selectedOrder.driverId ?? ""}
+                        onChange={(event) => event.target.value && assignDriver(selectedOrder.id, event.target.value)}
+                      >
+                        <option value="">Select driver</option>
+                        {[...availableDrivers, ...drivers.filter((driver) => driver.id === selectedOrder.driverId)].map((driver) => (
+                          <option value={driver.id} key={driver.id}>
+                            {driver.name} · {driver.vehicle}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <div className="status-actions">
+                      {statusFlow.map((status) => (
+                        <button
+                          key={status}
+                          className={cx("status-button", selectedOrder.status === status && "status-button-active")}
+                          onClick={() => updateOrderStatus(selectedOrder.id, status)}
+                        >
+                          {statusLabels[status]}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+              </aside>
+            </section>
+          ) : null}
+
+          {showTracking ? (
+            <section className="tracking-layout">
+              <div className="panel map-panel">
+                <div className="panel-header">
+                  <div>
+                    <h2>Live Tracking</h2>
+                    <p>{selectedDriver?.name} · {selectedDriver?.vehicle}</p>
+                  </div>
+                  <button className="secondary-button" onClick={optimizeSelectedRoute}>
+                    <Navigation size={17} />
+                    Optimize
+                  </button>
+                </div>
+                <FleetMap drivers={drivers} routePlan={routePlan} selectedDriverId={selectedDriver?.id} />
+              </div>
+
+              <div className="panel drivers-panel">
+                <div className="panel-header compact">
+                  <div>
+                    <h2>Drivers</h2>
+                    <p>{drivers.length} total</p>
+                  </div>
+                  <UserRoundCheck size={19} />
+                </div>
+                <div className="driver-list">
+                  {drivers.map((driver) => (
                     <button
-                      className={cx("table-row order-row", selectedOrder?.id === order.id && "selected")}
-                      key={order.id}
-                      onClick={() => {
-                        setSelectedOrderId(order.id);
-                        if (driver) setSelectedDriverId(driver.id);
-                      }}
+                      className={cx("driver-card", selectedDriver?.id === driver.id && "selected")}
+                      key={driver.id}
+                      onClick={() => setSelectedDriverId(driver.id)}
                     >
-                      <span className="order-cell">
-                        <PackageCheck size={17} />
-                        <span>
-                          <strong>{order.id}</strong>
-                          <small>
-                            {order.items} items, {order.weightKg} kg
-                          </small>
+                      <span className="driver-avatar">{driver.initials}</span>
+                      <span className="driver-copy">
+                        <strong>{driver.name}</strong>
+                        <small>{driver.vehicle} · {driver.rating.toFixed(1)}</small>
+                        <span className="progress-bar">
+                          <span style={{ width: `${driver.routeProgress}%` }} />
                         </span>
                       </span>
-                      <span>
-                        <strong>{order.customer}</strong>
-                        <small>{order.phone}</small>
-                      </span>
-                      <span>{order.address}</span>
-                      <span>{driver?.name ?? "Unassigned"}</span>
-                      <span>
-                        <StatusBadge status={order.status} />
-                      </span>
+                      <DriverStatusBadge status={driver.status} />
                     </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <aside className="panel dispatch-panel">
-              <div className="panel-header compact">
-                <div>
-                  <h2>Dispatch</h2>
-                  <p>{selectedOrder?.id}</p>
+                  ))}
                 </div>
-                <Command size={19} />
+              </div>
+            </section>
+          ) : null}
+
+          {showInsights ? (
+            <section className="insights-layout">
+              <div className="panel ai-panel">
+                <div className="panel-header compact">
+                  <div>
+                    <h2>AI Operations</h2>
+                    <p>Route, ETA, and demand predictions</p>
+                  </div>
+                  <Sparkles size={20} />
+                </div>
+                <div className="ai-grid">
+                  <AiTile icon={<Route size={18} />} title="Route optimization" value="14.2 mi saved" />
+                  <AiTile icon={<Clock3 size={18} />} title="ETA confidence" value="91%" />
+                  <AiTile icon={<Gauge size={18} />} title="SLA risk" value="2 orders" />
+                </div>
+                <div className="suggestion-list">
+                  {assignmentSuggestions.length ? (
+                    assignmentSuggestions.slice(0, 3).map((suggestion) => {
+                      const driver = drivers.find((item) => item.id === suggestion.suggestedDriverId);
+                      const isAssigningSuggestion = assigningSuggestionId === suggestion.orderId;
+                      return (
+                        <article className="suggestion-card" data-testid={`assignment-suggestion-${suggestion.orderId}`} key={suggestion.orderId}>
+                          <button
+                            className="suggestion-select"
+                            type="button"
+                            onClick={() => {
+                              setSelectedOrderId(suggestion.orderId);
+                              if (suggestion.suggestedDriverId) setSelectedDriverId(suggestion.suggestedDriverId);
+                            }}
+                          >
+                            <span>
+                              <strong>{suggestion.orderId}</strong>
+                              <small>{driver?.name ?? "Awaiting driver"}</small>
+                            </span>
+                            <span className="suggestion-score">{suggestion.score}</span>
+                            <small>{suggestion.reason}</small>
+                          </button>
+                          <button
+                            className="suggestion-action"
+                            data-testid={`assign-suggestion-${suggestion.orderId}`}
+                            type="button"
+                            disabled={!suggestion.suggestedDriverId || isAssigningSuggestion}
+                            onClick={() => assignSuggestedDriver(suggestion)}
+                          >
+                            <Send size={15} />
+                            {isAssigningSuggestion ? "Assigning" : "Assign"}
+                          </button>
+                        </article>
+                      );
+                    })
+                  ) : (
+                    <div className="suggestion-empty">No open orders need assignment</div>
+                  )}
+                </div>
+                <div className="forecast-chart">
+                  {forecast.map((item) => (
+                    <div className="forecast-bar" key={item.label}>
+                      <span style={{ height: `${(item.orders / maxForecast) * 100}%` }} />
+                      <small>{item.label}</small>
+                    </div>
+                  ))}
+                </div>
               </div>
 
-              {selectedOrder ? (
-                <>
-                  <div className="detail-stack">
-                    <Detail label="Customer" value={selectedOrder.customer} />
-                    <Detail label="Address" value={selectedOrder.address} />
-                    <Detail label="Priority" value={selectedOrder.priority} />
-                    <Detail label="ETA" value={selectedOrder.eta} />
+              <div className="panel notifications-panel">
+                <div className="panel-header compact">
+                  <div>
+                    <h2>Notifications</h2>
+                    <p>3 unread</p>
                   </div>
-
-                  <label className="select-label">
-                    Assign driver
-                    <select
-                      value={selectedOrder.driverId ?? ""}
-                      onChange={(event) => event.target.value && assignDriver(selectedOrder.id, event.target.value)}
-                    >
-                      <option value="">Select driver</option>
-                      {[...availableDrivers, ...drivers.filter((driver) => driver.id === selectedOrder.driverId)].map((driver) => (
-                        <option value={driver.id} key={driver.id}>
-                          {driver.name} · {driver.vehicle}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <div className="status-actions">
-                    {statusFlow.map((status) => (
-                      <button
-                        key={status}
-                        className={cx("status-button", selectedOrder.status === status && "status-button-active")}
-                        onClick={() => updateOrderStatus(selectedOrder.id, status)}
-                      >
-                        {statusLabels[status]}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              ) : null}
-            </aside>
-          </section>
-
-          <section className="tracking-layout">
-            <div className="panel map-panel">
-              <div className="panel-header">
-                <div>
-                  <h2>Live Tracking</h2>
-                  <p>{selectedDriver?.name} · {selectedDriver?.vehicle}</p>
+                  <Bell size={19} />
                 </div>
-                <button className="secondary-button" onClick={optimizeSelectedRoute}>
-                  <Navigation size={17} />
-                  Optimize
+                <div className="notification-list">
+                  {notifications.map((item) => (
+                    <div className={cx("notification-item", item.tone)} key={item.id}>
+                      <span />
+                      <div>
+                        <strong>{item.title}</strong>
+                        <p>{item.body}</p>
+                        <small>{item.time} ago</small>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <button className="wide-button" onClick={openCustomerUpdateDialog}>
+                  <Send size={16} />
+                  Send customer update
                 </button>
               </div>
-              <FleetMap drivers={drivers} routePlan={routePlan} selectedDriverId={selectedDriver?.id} />
-            </div>
-
-            <div className="panel drivers-panel">
-              <div className="panel-header compact">
-                <div>
-                  <h2>Drivers</h2>
-                  <p>{drivers.length} total</p>
-                </div>
-                <UserRoundCheck size={19} />
-              </div>
-              <div className="driver-list">
-                {drivers.map((driver) => (
-                  <button
-                    className={cx("driver-card", selectedDriver?.id === driver.id && "selected")}
-                    key={driver.id}
-                    onClick={() => setSelectedDriverId(driver.id)}
-                  >
-                    <span className="driver-avatar">{driver.initials}</span>
-                    <span className="driver-copy">
-                      <strong>{driver.name}</strong>
-                      <small>{driver.vehicle} · {driver.rating.toFixed(1)}</small>
-                      <span className="progress-bar">
-                        <span style={{ width: `${driver.routeProgress}%` }} />
-                      </span>
-                    </span>
-                    <DriverStatusBadge status={driver.status} />
-                  </button>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          <section className="insights-layout">
-            <div className="panel ai-panel">
-              <div className="panel-header compact">
-                <div>
-                  <h2>AI Operations</h2>
-                  <p>Route, ETA, and demand predictions</p>
-                </div>
-                <Sparkles size={20} />
-              </div>
-              <div className="ai-grid">
-                <AiTile icon={<Route size={18} />} title="Route optimization" value="14.2 mi saved" />
-                <AiTile icon={<Clock3 size={18} />} title="ETA confidence" value="91%" />
-                <AiTile icon={<Gauge size={18} />} title="SLA risk" value="2 orders" />
-              </div>
-              <div className="suggestion-list">
-                {assignmentSuggestions.length ? (
-                  assignmentSuggestions.slice(0, 3).map((suggestion) => {
-                    const driver = drivers.find((item) => item.id === suggestion.suggestedDriverId);
-                    const isAssigningSuggestion = assigningSuggestionId === suggestion.orderId;
-                    return (
-                      <article className="suggestion-card" data-testid={`assignment-suggestion-${suggestion.orderId}`} key={suggestion.orderId}>
-                        <button
-                          className="suggestion-select"
-                          type="button"
-                          onClick={() => {
-                            setSelectedOrderId(suggestion.orderId);
-                            if (suggestion.suggestedDriverId) setSelectedDriverId(suggestion.suggestedDriverId);
-                          }}
-                        >
-                          <span>
-                            <strong>{suggestion.orderId}</strong>
-                            <small>{driver?.name ?? "Awaiting driver"}</small>
-                          </span>
-                          <span className="suggestion-score">{suggestion.score}</span>
-                          <small>{suggestion.reason}</small>
-                        </button>
-                        <button
-                          className="suggestion-action"
-                          data-testid={`assign-suggestion-${suggestion.orderId}`}
-                          type="button"
-                          disabled={!suggestion.suggestedDriverId || isAssigningSuggestion}
-                          onClick={() => assignSuggestedDriver(suggestion)}
-                        >
-                          <Send size={15} />
-                          {isAssigningSuggestion ? "Assigning" : "Assign"}
-                        </button>
-                      </article>
-                    );
-                  })
-                ) : (
-                  <div className="suggestion-empty">No open orders need assignment</div>
-                )}
-              </div>
-              <div className="forecast-chart">
-                {forecast.map((item) => (
-                  <div className="forecast-bar" key={item.label}>
-                    <span style={{ height: `${(item.orders / maxForecast) * 100}%` }} />
-                    <small>{item.label}</small>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="panel notifications-panel">
-              <div className="panel-header compact">
-                <div>
-                  <h2>Notifications</h2>
-                  <p>3 unread</p>
-                </div>
-                <Bell size={19} />
-              </div>
-              <div className="notification-list">
-                {notifications.map((item) => (
-                  <div className={cx("notification-item", item.tone)} key={item.id}>
-                    <span />
-                    <div>
-                      <strong>{item.title}</strong>
-                      <p>{item.body}</p>
-                      <small>{item.time} ago</small>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <button className="wide-button" onClick={openCustomerUpdateDialog}>
-                <Send size={16} />
-                Send customer update
-              </button>
-            </div>
-          </section>
+            </section>
+          ) : null}
         </div>
       </section>
       {orderDialogOpen ? (
